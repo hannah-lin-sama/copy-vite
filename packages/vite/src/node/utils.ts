@@ -421,17 +421,26 @@ export function lookupFile(
   }
 }
 
+/**
+ * 检查文件路径是否为 ESM 模块
+ * @param filePath 文件路径
+ * @param packageCache 匓存的 package.json 数据
+ * @returns 是否为 ESM 模块
+ */
 export function isFilePathESM(
   filePath: string,
   packageCache?: PackageCache,
 ): boolean {
+  // 检查文件路径是否为 ESM 模块
   if (/\.m[jt]s$/.test(filePath)) {
     return true
+    // 检查文件路径是否为 CommonJS 模块
   } else if (/\.c[jt]s$/.test(filePath)) {
     return false
   } else {
     // check package.json for type: "module"
     try {
+      // 查找最近的 package.json 文件
       const pkg = findNearestPackageData(path.dirname(filePath), packageCache)
       return pkg?.data.type === 'module'
     } catch {
@@ -643,12 +652,20 @@ export function copyDir(srcDir: string, destDir: string): void {
 
 export const ERR_SYMLINK_IN_RECURSIVE_READDIR =
   'ERR_SYMLINK_IN_RECURSIVE_READDIR'
+
+/**
+ * 递归读取目录下的所有文件
+ * @param dir 目录路径
+ * @returns 文件路径数组
+ */
 export async function recursiveReaddir(dir: string): Promise<string[]> {
+  // 如果目录不存在，直接返回空数组
   if (!fs.existsSync(dir)) {
     return []
   }
   let dirents: fs.Dirent[]
   try {
+    // 读取目录下的所有文件和子目录
     dirents = await fsp.readdir(dir, { withFileTypes: true })
   } catch (e) {
     if (e.code === 'EACCES') {
@@ -657,6 +674,7 @@ export async function recursiveReaddir(dir: string): Promise<string[]> {
     }
     throw e
   }
+  // 如果目录下有符号链接，直接出错
   if (dirents.some((dirent) => dirent.isSymbolicLink())) {
     const err: any = new Error(
       'Symbolic links are not supported in recursiveReaddir',
@@ -664,12 +682,16 @@ export async function recursiveReaddir(dir: string): Promise<string[]> {
     err.code = ERR_SYMLINK_IN_RECURSIVE_READDIR
     throw err
   }
+  // 递归读取子目录下的所有文件
   const files = await Promise.all(
     dirents.map((dirent) => {
       const res = path.resolve(dir, dirent.name)
+      // 如果是目录，递归读取子目录下的所有文件
+      // 如果是文件，直接返回文件路径
       return dirent.isDirectory() ? recursiveReaddir(res) : normalizePath(res)
     }),
   )
+  // 扁平化文件路径数组，将所有子目录下的文件路径也包含在内
   return files.flat(1)
 }
 
@@ -923,6 +945,11 @@ export function unique<T>(arr: T[]): T[] {
 export async function getLocalhostAddressIfDiffersFromDNS(): Promise<
   string | undefined
 > {
+  // 解析 localhost 地址
+  // 1. 从 DNS 解析 localhost 地址
+  // 2. 从 DNS 解析 localhost 地址，指定 defaultResultOrder 为 `verbatim`
+  // 3. 对比解析结果是否相同
+  // 4. 如果不同，返回解析结果
   const [nodeResult, dnsResult] = await Promise.all([
     dns.lookup('localhost'),
     dns.lookup('localhost', { verbatim: true }),
@@ -933,6 +960,12 @@ export async function getLocalhostAddressIfDiffersFromDNS(): Promise<
   return isSame ? undefined : nodeResult.address
 }
 
+/**
+ * 对比 DNS 解析结果是否相同
+ * @param oldUrls 旧的 DNS 解析结果
+ * @param newUrls 新的 DNS 解析结果
+ * @returns 是否不同
+ */
 export function diffDnsOrderChange(
   oldUrls: ViteDevServer['resolvedUrls'],
   newUrls: ViteDevServer['resolvedUrls'],
@@ -953,9 +986,15 @@ export interface Hostname {
   name: string
 }
 
+/**
+ * 解析主机名
+ * @param optionsHost 主机名选项
+ * @returns 解析后的主机名
+ */
 export async function resolveHostname(
   optionsHost: string | boolean | undefined,
 ): Promise<Hostname> {
+
   let host: string | undefined
   if (optionsHost === undefined || optionsHost === false) {
     // Use a secure default

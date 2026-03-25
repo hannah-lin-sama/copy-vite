@@ -30,6 +30,13 @@ export type CLIShortcut<Server = ViteDevServer | PreviewServer> = {
   action?(server: Server): void | Promise<void>
 }
 
+/**
+ * 绑定 CLI 短键
+ * @param server 服务器实例
+ * @param opts 短键选项
+ * @param enabled 是否启用
+ * @returns 
+ */
 export function bindCLIShortcuts<Server extends ViteDevServer | PreviewServer>(
   server: Server,
   opts?: BindCLIShortcutsOptions<Server>,
@@ -44,6 +51,7 @@ export function bindCLIShortcuts<Server extends ViteDevServer | PreviewServer>(
   // Merge shortcuts: new at top, existing updated in place (keeps manual > plugin order)
   const previousShortcuts =
     server._shortcutsState?.options.customShortcuts ?? []
+    
   const newShortcuts = opts?.customShortcuts ?? []
   const previousKeys = new Set(previousShortcuts.map((s) => s.key))
   const customShortcuts: CLIShortcut<ViteDevServer | PreviewServer>[] = [

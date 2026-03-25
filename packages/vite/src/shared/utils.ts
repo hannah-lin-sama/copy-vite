@@ -29,6 +29,12 @@ export function slash(p: string): string {
 }
 
 const postfixRE = /[?#].*$/
+
+/**
+ * 清理 URL，移除查询参数和哈希值
+ * @param url URL 字符串
+ * @returns 
+ */
 export function cleanUrl(url: string): string {
   return url.replace(postfixRE, '')
 }

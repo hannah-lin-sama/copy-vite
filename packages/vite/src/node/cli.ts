@@ -32,6 +32,7 @@ if (!checkNodeVersion(process.versions.node)) {
   )
 }
 
+// 定义 Vite 命令行工具
 const cli = cac('vite')
 
 // global options
@@ -91,9 +92,11 @@ export const stopProfiler = (
   })
 }
 
+// 去除重复的配置项
 const filterDuplicateOptions = <T extends object>(options: T) => {
   for (const [key, value] of Object.entries(options)) {
     if (Array.isArray(value)) {
+      // 保留最后一个值
       options[key as keyof T] = value[value.length - 1]
     }
   }
@@ -209,9 +212,11 @@ cli
       root: string,
       options: ServerOptions & ExperimentalDevOptions & GlobalCLIOptions,
     ) => {
+      // 去除重复的配置项
       filterDuplicateOptions(options)
       // output structure is preserved even after bundling so require()
       // is ok here
+      // 动态导入并创建开发服务器
       const { createServer } = await import('./server')
       try {
         const server = await createServer({
@@ -229,18 +234,24 @@ cli
           },
         })
 
+        // 校验服务器实例并启动
         if (!server.httpServer) {
           throw new Error('HTTP server not available')
         }
 
+        // 启动 HTTP 服务器监听指定端口
         await server.listen()
 
+        // 输出启动日志
         const info = server.config.logger.info
 
         const modeString =
+        // 非 development 模式，输出环境模式
           options.mode && options.mode !== 'development'
             ? `  ${colors.bgGreen(` ${colors.bold(options.mode)} `)}`
             : ''
+
+        // 启动耗时（计算从 Vite 启动到服务器就绪的时间）
         const viteStartTime = global.__vite_start_time ?? false
         const startupDurationString = viteStartTime
           ? colors.dim(
@@ -249,9 +260,11 @@ cli
               )} ms`,
             )
           : ''
+        // 检查是否有已存在的日志输出（避免重复打印）
         const hasExistingLogs =
           process.stdout.bytesWritten > 0 || process.stderr.bytesWritten > 0
 
+        // 输出核心启动日志（Vite 版本 + 模式 + 启动耗时）
         info(
           `\n  ${colors.green(
             `${colors.bold('VITE')} v${VERSION}`,
@@ -261,6 +274,7 @@ cli
           },
         )
 
+        // 打印服务器访问地址（如 http://localhost:3000/）
         server.printUrls()
         const customShortcuts: CLIShortcut<typeof server>[] = []
         if (profileSession) {
@@ -288,6 +302,7 @@ cli
             },
           })
         }
+        // 绑定快捷键到服务器（print: true 表示打印快捷键说明）
         server.bindCLIShortcuts({ print: true, customShortcuts })
       } catch (e) {
         const logger = createLogger(options.logLevel)
@@ -364,14 +379,17 @@ cli
           build: buildOptions,
           ...(options.app ? { builder: {} } : {}),
         }
+        // 创建构建器实例
         const builder = await createBuilder(inlineConfig, null)
-        await builder.buildApp()
-        await builder.runDevTools()
+        await builder.buildApp() // 构建应用
+        await builder.runDevTools() // 运行开发工具
       } catch (e) {
         createLogger(options.logLevel).error(
           colors.red(`error during build:\n${inspect(e)}`),
           { error: e },
         )
+        
+        // 退出进程，状态码为 1 表示错误
         process.exit(1)
       } finally {
         await stopProfiler((message) =>
@@ -441,6 +459,7 @@ cli
       filterDuplicateOptions(options)
       const { preview } = await import('./preview')
       try {
+        // 创建预览服务器实例
         const server = await preview({
           root,
           base: options.base,
@@ -458,7 +477,9 @@ cli
             open: options.open,
           },
         })
+        // 打印预览服务器 URL
         server.printUrls()
+        // 绑定 CLI 快捷键
         server.bindCLIShortcuts({ print: true })
       } catch (e) {
         createLogger(options.logLevel).error(

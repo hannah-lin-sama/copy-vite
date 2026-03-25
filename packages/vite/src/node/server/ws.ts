@@ -28,6 +28,7 @@ import type { HttpServer } from '.'
  */
 const WebSocketServerRaw = process.versions.bun
   ? // @ts-expect-error: Bun defines `import.meta.require`
+  // import.meta.require 是 Bun 独有的同步模块加载 API，用于在 ESM 中加载 CommonJS 模块（类似于 Node.js 的 require）
     import.meta.require('ws').WebSocketServer
   : WebSocketServerRaw_
 
@@ -115,11 +116,20 @@ function hasValidToken(config: ResolvedConfig, url: URL) {
   return false
 }
 
+/**
+ * 创建 WebSocket 服务器
+ * @param server HTTP 服务器实例
+ * @param config 配置对象
+ * @param httpsOptions HTTPS 服务器选项
+ * @returns WebSocket 服务器实例
+ */
 export function createWebSocketServer(
   server: HttpServer | null,
   config: ResolvedConfig,
   httpsOptions?: HttpsServerOptions,
 ): WebSocketServer {
+
+  // 如果配置中禁用了 WebSocket，直接返回一个空的 WebSocket 服务器
   if (config.server.ws === false) {
     return {
       [isWebSocketServer]: true,
@@ -144,28 +154,46 @@ export function createWebSocketServer(
     }
   }
 
+  // Vite 支持两种 WebSocket 服务器部署方式：
+  // 1、与主 HTTP 服务器共享同一个端口：这种情况下，WebSocket 升级请求通过主服务器的 upgrade 事件处理。
+  // 2、独立端口：如果 HMR 配置指定了不同的端口（config.server.hmr.port）或主服务器不存在（中间件模式），则会单独创建一个 HTTP/HTTPS 服务器来承载 WebSocket 服务。
+
   let wsHttpServer: Server | undefined = undefined
 
+  // 获取 HMR 配置
   const hmr = isObject(config.server.hmr) && config.server.hmr
+  // 获取 HMR 服务器配置
   const hmrServer = hmr && hmr.server
+  // 获取 HMR 服务器端口
   const hmrPort = hmr && hmr.port
+
   // TODO: the main server port may not have been chosen yet as it may use the next available
+ // HMR未配置端口 或者  HMR 端口与主服务器端口一致
   const portsAreCompatible = !hmrPort || hmrPort === config.server.port
+  // 用户显式指定了 hmr.server
+  // 主服务器存在，则复用主服务器
   const wsServer = hmrServer || (portsAreCompatible && server)
+
   let hmrServerWsListener: (
     req: InstanceType<typeof IncomingMessage>,
     socket: Duplex,
     head: Buffer,
   ) => void
+
+  // 初始化自定义事件监听器
   const customListeners = new Map<string, Set<WebSocketCustomListener<any>>>()
+  // 初始化 WebSocket 客户端映射
   const clientsMap = new WeakMap<WebSocketRaw, WebSocketClient>()
-  const port = hmrPort || 24678
-  const host = (hmr && hmr.host) || undefined
+  const port = hmrPort || 24678 // 获取 WebSocket 服务器端口
+  const host = (hmr && hmr.host) || undefined // 获取 WebSocket 服务器主机地址
+
+  // 获取允许的主机地址
   const allowedHosts =
     config.server.allowedHosts === true
       ? config.server.allowedHosts
       : Object.freeze([...config.server.allowedHosts]) // Freeze the array to allow caching
 
+  // 决定是否接受该 WebSocket 升级请求
   const shouldHandle = (req: IncomingMessage) => {
     const protocol = req.headers['sec-websocket-protocol']!
     // vite-ping is allowed to connect from anywhere
@@ -214,9 +242,11 @@ export function createWebSocketServer(
       wss.emit('connection', ws, req)
     })
   }
+
   const wss: WebSocketServerRaw_ = new WebSocketServerRaw({ noServer: true })
   wss.shouldHandle = shouldHandle
 
+  // 复用主服务器，只需要监听 upgrade 事件
   if (wsServer) {
     let hmrBase = config.base
     const hmrPath = hmr ? hmr.path : undefined
@@ -224,6 +254,7 @@ export function createWebSocketServer(
       hmrBase = path.posix.join(hmrBase, hmrPath)
     }
     hmrServerWsListener = (req, socket, head) => {
+      // 获取 WebSocket 升议头
       const protocol = req.headers['sec-websocket-protocol']!
       const parsedUrl = new URL(`http://example.com${req.url!}`)
       if (
@@ -234,6 +265,7 @@ export function createWebSocketServer(
       }
     }
     wsServer.on('upgrade', hmrServerWsListener)
+
   } else {
     // http server request handler keeps the same with
     // https://github.com/websockets/ws/blob/45e17acea791d865df6b255a55182e9c42e5877a/lib/websocket-server.js#L88-L96
@@ -249,6 +281,7 @@ export function createWebSocketServer(
       })
       res.end(body)
     }) as Parameters<typeof createHttpServer>[1]
+
     // vite dev server in middleware mode
     // need to call ws listen manually
     if (httpsOptions) {
@@ -256,6 +289,7 @@ export function createWebSocketServer(
     } else {
       wsHttpServer = createHttpServer(route)
     }
+
     wsHttpServer.on('upgrade', (req, socket, head) => {
       const protocol = req.headers['sec-websocket-protocol']!
       if (protocol === 'vite-ping' && server && !server.listening) {
@@ -267,6 +301,7 @@ export function createWebSocketServer(
       }
       handleUpgrade(req, socket as Socket, head, protocol === 'vite-ping')
     })
+    
     wsHttpServer.on('error', (e: Error & { code: string; port: number }) => {
       if (e.code === 'EADDRINUSE') {
         config.logger.error(

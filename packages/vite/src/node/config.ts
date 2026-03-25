@@ -1353,9 +1353,22 @@ export function isResolvedConfig(
   )
 }
 
+/**
+ * 解析配置对象
+ * 
+ * @param inlineConfig 内联配置对象
+ * @param command 命令类型
+ * @param defaultMode 默认模式
+ * @param defaultNodeEnv 默认 Node 环境
+ * @param isPreview 是否为预览模式
+ * @param patchConfig 配置对象修补函数
+ * @param patchPlugins 插件修补函数
+ * @param plugins 插件数组
+ * @returns 
+ */
 export async function resolveConfig(
   inlineConfig: InlineConfig,
-  command: 'build' | 'serve',
+  command: 'build' | 'serve', // 确保是 build 或 serve 命令
   defaultMode = 'development',
   defaultNodeEnv = 'development',
   isPreview = false,
@@ -1365,12 +1378,16 @@ export async function resolveConfig(
   patchPlugins: ((resolvedPlugins: Plugin[]) => void) | undefined = undefined,
 ): Promise<ResolvedConfig> {
   let config = inlineConfig
+  // 初始化 build 配置对象
   config.build ??= {}
   setupRollupOptionCompat(config.build, 'build')
+  // 初始化 worker 配置
   config.worker ??= {}
   setupRollupOptionCompat(config.worker, 'worker')
+  // 初始化 optimizeDeps 配置
   config.optimizeDeps ??= {}
   setupRollupOptionCompat(config.optimizeDeps, 'optimizeDeps')
+  // 初始化 ssr 配置
   if (config.ssr) {
     config.ssr.optimizeDeps ??= {}
     setupRollupOptionCompat(config.ssr.optimizeDeps, 'ssr.optimizeDeps')
@@ -1428,13 +1445,15 @@ export async function resolveConfig(
   }
 
   // resolve plugins
+  // 过滤出符合命令的插件
   const rawPlugins = (await asyncFlatten(config.plugins || [])).filter(
     filterPlugin,
   )
 
+  // 插件排序
   const [prePlugins, normalPlugins, postPlugins] = sortUserPlugins(rawPlugins)
 
-  const isBuild = command === 'build'
+  const isBuild = command === 'build' // 是否是构建命令
 
   // run config hooks
   const userPlugins = [...prePlugins, ...normalPlugins, ...postPlugins]
@@ -1442,6 +1461,7 @@ export async function resolveConfig(
 
   // Ensure default client and ssr environments
   // If there are present, ensure order { client, ssr, ...custom }
+  // 初始化环境对象
   config.environments ??= {}
   if (
     !config.environments.ssr &&
@@ -1824,6 +1844,9 @@ export async function resolveConfig(
   }
 
   let oxc: OxcOptions | false | undefined = config.oxc
+
+  // esbuild 配置优先于 oxc 配置
+  // esbuild 已废弃，建议使用 oxc 配置
   if (config.esbuild) {
     if (config.oxc) {
       logger.warn(
@@ -1833,6 +1856,7 @@ export async function resolveConfig(
           ` The following esbuild options were set: \`${inspect(config.esbuild)}\``,
       )
     } else {
+      // 将 esbuild 配置转换为 oxc 配置
       oxc = convertEsbuildConfigToOxcConfig(config.esbuild, logger)
     }
   } else if (config.esbuild === false && config.oxc !== false) {
@@ -1874,6 +1898,7 @@ export async function resolveConfig(
     cacheDir,
     command,
     mode,
+    // 
     isBundled: config.experimental?.bundledDev || isBuild,
     isWorker: false,
     mainConfig: null,
@@ -2573,6 +2598,13 @@ async function loadConfigFromBundledFile(
   }
 }
 
+/**
+ * 运行配置钩子函数
+ * @param config 配置对象
+ * @param plugins 插件数组
+ * @param configEnv 配置环境对象
+ * @returns 
+ */
 async function runConfigHook(
   config: InlineConfig,
   plugins: Plugin[],
@@ -2588,9 +2620,11 @@ async function runConfigHook(
     Omit<PluginContextMeta, 'watchMode'>
   >(basePluginContextMeta, tempLogger)
 
+  // 根据 config 钩子排序插件
   for (const p of getSortedPluginsByHook('config', plugins)) {
     const hook = p.config
-    const handler = getHookHandler(hook)
+    const handler = getHookHandler(hook) // 获取插件钩子函数的处理函数
+    // 调用插件钩子函数
     const res = await handler.call(context, conf, configEnv)
     if (res && res !== conf) {
       if (hasBothRollupOptionsAndRolldownOptions(res)) {
@@ -2615,9 +2649,18 @@ async function runConfigHook(
     }
   }
 
+  // 返回合并后的配置对象
   return conf
 }
 
+/**
+ * 运行配置环境钩子函数
+ * @param environments 环境配置对象
+ * @param plugins 插件数组
+ * @param logger logger 实例
+ * @param configEnv 配置环境对象
+ * @param isSsrTargetWebworkerSet 是否为 SSR 目标 Webworker
+ */
 async function runConfigEnvironmentHook(
   environments: Record<string, EnvironmentOptions>,
   plugins: Plugin[],

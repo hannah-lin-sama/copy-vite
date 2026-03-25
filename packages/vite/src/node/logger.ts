@@ -165,6 +165,12 @@ export function createLogger(
   return logger
 }
 
+/**
+ * 打印服务器监听的 URL 地址
+ * @param urls 服务器监听的 URL 地址
+ * @param optionsHost 服务器监听的主机地址
+ * @param info 日志函数，用于输出信息日志
+ */
 export function printServerUrls(
   urls: ResolvedServerUrls,
   optionsHost: string | boolean | undefined,
@@ -172,12 +178,17 @@ export function printServerUrls(
 ): void {
   const colorUrl = (url: string) =>
     colors.cyan(url.replace(/:(\d+)\//, (_, port) => `:${colors.bold(port)}/`))
+
+  // 打印本地地址和网络地址的 URL 地址
   for (const url of urls.local) {
     info(`  ${colors.green('➜')}  ${colors.bold('Local')}:   ${colorUrl(url)}`)
   }
+  // 打印网络地址的 URL 地址
   for (const url of urls.network) {
     info(`  ${colors.green('➜')}  ${colors.bold('Network')}: ${colorUrl(url)}`)
   }
+
+  // 如果没有网络地址，提示用户使用 --host 选项暴露服务器
   if (urls.network.length === 0 && optionsHost === undefined) {
     info(
       colors.dim(`  ${colors.green('➜')}  ${colors.bold('Network')}: use `) +

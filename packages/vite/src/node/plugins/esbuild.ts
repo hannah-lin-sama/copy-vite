@@ -537,6 +537,11 @@ export function getTSConfigResolutionCache(
   return cache
 }
 
+/**
+ * 处理 TypeScript tsconfig.json 文件变化事件
+ * @param server 服务器实例
+ * @param changedFile 变化文件路径
+ */
 export async function reloadOnTsconfigChange(
   server: ViteDevServer,
   changedFile: string,
@@ -545,6 +550,8 @@ export async function reloadOnTsconfigChange(
   // any json file in the tsconfig cache could have been used to compile ts
   if (changedFile.endsWith('.json')) {
     const cache = getTSConfigResolutionCache(server.config)
+
+    // 精准匹配 - 仅处理 tsconfig.json 文件
     if (changedFile.endsWith('/tsconfig.json')) {
       server.config.logger.info(
         `changed tsconfig file detected: ${changedFile} - Clearing cache and forcing full-reload to ensure TypeScript is compiled with updated config values.`,
@@ -554,6 +561,7 @@ export async function reloadOnTsconfigChange(
       // TODO: more finegrained invalidation than the nuclear option below
 
       // clear module graph to remove code compiled with outdated config
+      // 清空所有环境的模块依赖图
       for (const environment of Object.values(server.environments)) {
         environment.moduleGraph.invalidateAll()
       }
@@ -562,6 +570,7 @@ export async function reloadOnTsconfigChange(
       cache.clear()
 
       // reload environments
+      // 向所有环境推送「全量重载」指令，强制客户端刷新
       for (const environment of Object.values(server.environments)) {
         environment.hot.send({
           type: 'full-reload',

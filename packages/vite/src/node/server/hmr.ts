@@ -338,6 +338,7 @@ export function getSortedPluginsByHotUpdateHook(
     normal = 0,
     post = 0
   for (const plugin of plugins) {
+    // 取出插件的 hotUpdate 或 handleHotUpdate 钩子
     const hook = plugin['hotUpdate'] ?? plugin['handleHotUpdate']
     if (hook) {
       if (typeof hook === 'object') {
@@ -367,28 +368,44 @@ function getSortedHotUpdatePlugins(environment: Environment): Plugin[] {
   return sortedPlugins
 }
 
+/**
+ * 处理 HMR 更新
+ * @param type 文件变化类型
+ * @param file 文件路径
+ * @param server 服务器实例
+ * @returns 
+ */
 export async function handleHMRUpdate(
   type: 'create' | 'delete' | 'update',
   file: string,
   server: ViteDevServer,
 ): Promise<void> {
+
+  // 获取服务器配置
   const { config } = server
   const mixedModuleGraph = ignoreDeprecationWarnings(() => server.moduleGraph)
 
+  // 获取所有环境
   const environments = Object.values(server.environments)
   const shortFile = getShortName(file, config.root)
 
-  const isConfig = file === config.configFile
+  const isConfig = file === config.configFile //是否是配置文件
+  // 是否是配置文件依赖
   const isConfigDependency = config.configFileDependencies.some(
     (name) => file === name,
   )
 
+  // 是否是环境文件
   const isEnv =
     config.envDir !== false &&
     getEnvFilesForMode(config.mode, config.envDir).includes(file)
+
+    // 配置文件、配置文件依赖、环境文件变化时，自动重启服务器
   if (isConfig || isConfigDependency || isEnv) {
     // auto restart server
     debugHmr?.(`[config change] ${colors.dim(shortFile)}`)
+
+    // 打印日志
     config.logger.info(
       colors.green(
         `${normalizePath(
@@ -398,6 +415,7 @@ export async function handleHMRUpdate(
       { clear: true, timestamp: true },
     )
     try {
+      // 重启服务器
       await restartServerWithUrls(server)
     } catch (e) {
       config.logger.error(colors.red(e))
@@ -408,6 +426,7 @@ export async function handleHMRUpdate(
   debugHmr?.(`[file change] ${colors.dim(shortFile)}`)
 
   // (dev only) the client itself cannot be hot updated.
+  // Vite 客户端自身文件变更 → 不能热更 → 必须整页刷新
   if (file.startsWith(withTrailingSlash(normalizedClientDir))) {
     environments.forEach(({ hot }) =>
       hot.send({
@@ -419,6 +438,13 @@ export async function handleHMRUpdate(
     return
   }
 
+  // 普通开发模式（现在默认）
+  // 1、不打包，原生 ESM
+  // 2、每个文件单独请求
+  // 3、HMR 极快
+  // 4、但文件多了会有大量请求
+
+  // 如果开启了 Vite 实验性的 bundledDev 模式，就 直接跳过整个 HMR 热更新逻辑
   if (config.experimental.bundledDev) {
     // TODO: support handleHotUpdate / hotUpdate
     return
@@ -432,13 +458,30 @@ export async function handleHMRUpdate(
     read: () => readModifiedFile(file),
     server,
   }
+
   const hotMap = new Map<
     Environment,
     { options: HotUpdateOptions; error?: Error }
   >()
 
+  // 遍历所有环境（client /ssr），找出文件变更后「需要被热更新的模块」。
   for (const environment of Object.values(server.environments)) {
+    //  找到当前文件对应的所有模块
+    /**
+     * 例如：src/App.vue → 可能生成：
+      src/App.vue
+      src/App.vue?vue&type=script
+      src/App.vue?vue&type=template
+     */
     const mods = new Set(environment.moduleGraph.getModulesByFile(file))
+
+    // 如果是【文件新增】，把之前解析失败的模块也加进来重试
+    /**
+     * 场景：你先 import './Hello.vue'，但文件还没创建 → Vite 报错：模块不存在。
+     * 你创建了 Hello.vue → 文件类型是 create。
+     * Vite 会：把之前解析失败的模块重新加入热更新列表，让它们重试加载。  
+     * 作用：文件创建后，自动修复之前的导入错误，不需要刷新页面。
+     */
     if (type === 'create') {
       for (const mod of environment.moduleGraph._hasResolveFailedErrorModules) {
         mods.add(mod)
@@ -448,37 +491,58 @@ export async function handleHMRUpdate(
       ...contextMeta,
       modules: [...mods],
     }
+    // 存入 hotMap，后面统一执行更新
     hotMap.set(environment, { options })
   }
 
+/*  
+  背景：Vite 现在有 两套模块图
+  新架构：client、ssr 完全隔离（环境独立）
+  旧架构： mixedModuleGraph 混合在一起（不区分环境）
+*/
+  // mixedMods 混合模块
   const mixedMods = new Set(mixedModuleGraph.getModulesByFile(file))
-
+  // 专门给 plugin.handleHotUpdate 旧钩子使用的上下文。
   const mixedHmrContext: HmrContext = {
     ...contextMeta,
     modules: [...mixedMods],
   }
-
+  // 给旧插件提供一个最小化可用的插件上下文，
   const contextForHandleHotUpdate = new BasicMinimalPluginContext(
     { ...basePluginContextMeta, watchMode: true },
     config.logger,
   )
+  // 获取客户端环境和服务器端环境（新架构）
   const clientEnvironment = server.environments.client
   const ssrEnvironment = server.environments.ssr
+
+  // 客户端插件上下文，给新钩子 hotUpdate 使用。
   const clientContext = clientEnvironment.pluginContainer.minimalContext
+  // 取出热更新选项
+  // 后面执行插件时，会把旧插件返回的过滤结果同步回新架构，让 client + ssr 模块图都能正确更新。
   const clientHotUpdateOptions = hotMap.get(clientEnvironment)!.options
   const ssrHotUpdateOptions = hotMap.get(ssrEnvironment)?.options
+
+  // 遍历所有插件 
+  // → 执行它们的热更新钩子 
+  // → 过滤 / 修改要更新的模块 
+  // → 同步回 client /ssr/mixed 三套模块系统同时完美兼容新钩子（hotUpdate）+ 旧钩子（handleHotUpdate）。
   try {
     for (const plugin of getSortedHotUpdatePlugins(
       server.environments.client,
     )) {
+      // 新插件 hotUpdate 钒子
       if (plugin.hotUpdate) {
+        // 执行新钩子 hotUpdate
         const filteredModules = await getHookHandler(plugin.hotUpdate).call(
           clientContext,
           clientHotUpdateOptions,
         )
         if (filteredModules) {
+          // 更新 client 环境模块
           clientHotUpdateOptions.modules = filteredModules
           // Invalidate the hmrContext to force compat modules to be updated
+          // 同步更新混合模块图 mixedHmrContext（给旧插件兼容）
           mixedHmrContext.modules = mixedHmrContext.modules.filter(
             (mixedMod) =>
               filteredModules.some((mod) => mixedMod.id === mod.id) ||
@@ -499,7 +563,10 @@ export async function handleHMRUpdate(
               ),
           )
         }
+
+        // 旧插件 —— plugin.handleHotUpdate
       } else if (type === 'update') {
+        // 打印警告：未来会移除 handleHotUpdate
         warnFutureDeprecation(
           config,
           'removePluginHookHandleHotUpdate',
@@ -511,8 +578,10 @@ export async function handleHMRUpdate(
         const filteredModules = await getHookHandler(
           plugin.handleHotUpdate!,
         ).call(contextForHandleHotUpdate, mixedHmrContext)
+
         if (filteredModules) {
           mixedHmrContext.modules = filteredModules
+          // 同步回 client 环境模块列表
           clientHotUpdateOptions.modules =
             clientHotUpdateOptions.modules.filter((mod) =>
               filteredModules.some((mixedMod) => mod.id === mixedMod.id),
@@ -549,15 +618,19 @@ export async function handleHMRUpdate(
       }
     }
   } catch (error) {
+    // 插件执行出错 → 记录错误 → 后面发给浏览器红屏报错
     hotMap.get(server.environments.client)!.error = error
   }
 
   for (const environment of Object.values(server.environments)) {
+    // 跳过 client（浏览器）环境，因为前面已经处理过了
     if (environment.name === 'client') continue
+
     const hot = hotMap.get(environment)!
     const context = environment.pluginContainer.minimalContext
     try {
       for (const plugin of getSortedHotUpdatePlugins(environment)) {
+        // 新插件 hotUpdate 钒子
         if (plugin.hotUpdate) {
           const filteredModules = await getHookHandler(plugin.hotUpdate).call(
             context,
@@ -573,15 +646,24 @@ export async function handleHMRUpdate(
     }
   }
 
+  /**
+   * 处理热更新：决定是刷新页面、忽略、还是真正热替换模块
+   * @param environment 环境
+   * @returns 
+   */
   async function hmr(environment: DevEnvironment) {
     try {
+      // 获取当前环境的热更新信息
       const { options, error } = hotMap.get(environment)!
       if (error) {
         throw error
       }
+      // 如果没有需要更新的模块
       if (!options.modules.length) {
         // html file cannot be hot updated
+        // html文件 client环境不能热更新，刷新页面
         if (file.endsWith('.html') && environment.name === 'client') {
+          // 打印刷新页面日志
           environment.logger.info(
             colors.green(`page reload `) + colors.dim(shortFile),
             {
@@ -589,6 +671,7 @@ export async function handleHMRUpdate(
               timestamp: true,
             },
           )
+          // 发送刷新页面指令给浏览器
           environment.hot.send({
             type: 'full-reload',
             path: config.server.middlewareMode
@@ -597,6 +680,7 @@ export async function handleHMRUpdate(
           })
         } else {
           // loaded but not in the module graph, probably not js
+          // 普通静态文件，无模块可更新 → 打日志，不处理
           debugHmr?.(
             `(${environment.name}) [no modules matched] ${colors.dim(shortFile)}`,
           )
@@ -604,8 +688,10 @@ export async function handleHMRUpdate(
         return
       }
 
+      // 真正执行热更新（模块替换）
       updateModules(environment, shortFile, options.modules, timestamp)
     } catch (err) {
+      // 报错 → 发送红屏错误给浏览器
       environment.hot.send({
         type: 'error',
         err: prepareError(err),
@@ -614,9 +700,11 @@ export async function handleHMRUpdate(
   }
 
   const hotUpdateEnvironments =
+  // 热更新环境配置
     server.config.server.hotUpdateEnvironments ??
     ((server, hmr) => {
       // Run HMR in parallel for all environments by default
+      // 并行
       return Promise.all(
         Object.values(server.environments).map((environment) =>
           hmr(environment),
@@ -629,6 +717,15 @@ export async function handleHMRUpdate(
 
 type HasDeadEnd = string | boolean
 
+/**
+ * 负责计算热更新边界 → 决定是否刷新页面 → 生成更新消息 → 发送给浏览器。
+ * @param environment 环境
+ * @param file 文件路径
+ * @param modules 模块列表
+ * @param timestamp 时间戳
+ * @param firstInvalidatedBy 
+ * @returns 
+ */
 export function updateModules(
   environment: DevEnvironment,
   file: string,
@@ -637,16 +734,20 @@ export function updateModules(
   firstInvalidatedBy?: string,
 ): void {
   const { hot } = environment
-  const updates: Update[] = []
-  const invalidatedModules = new Set<EnvironmentModuleNode>()
-  const traversedModules = new Set<EnvironmentModuleNode>()
+  const updates: Update[] = [] // 要发送给浏览器的更新列表
+  const invalidatedModules = new Set<EnvironmentModuleNode>() // 已失效的模块
+  const traversedModules = new Set<EnvironmentModuleNode>()  // 遍历过的模块（防止循环）
   // Modules could be empty if a root module is invalidated via import.meta.hot.invalidate()
+  // 是否需要全页刷新
   let needFullReload: HasDeadEnd = modules.length === 0
 
+  // 遍历所有需要更新的模块
   for (const mod of modules) {
     const boundaries: PropagationBoundary[] = []
+    // 向上传播更新，找到 HMR 边界
     const hasDeadEnd = propagateUpdate(mod, traversedModules, boundaries)
 
+    // 失效模块（清空缓存，强制重编译）
     environment.moduleGraph.invalidateModule(
       mod,
       invalidatedModules,
@@ -654,10 +755,12 @@ export function updateModules(
       true,
     )
 
+    // 如果已经需要刷新页面，直接跳过当前模块
     if (needFullReload) {
       continue
     }
 
+    // 如果无法热更（hasDeadEnd）→ 标记需要全页刷新
     if (hasDeadEnd) {
       needFullReload = hasDeadEnd
       continue
@@ -676,6 +779,7 @@ export function updateModules(
       continue
     }
 
+    //  把「热更新边界」变成浏览器可执行的更新指令
     updates.push(
       ...boundaries.map(
         ({ boundary, acceptedVia, isWithinCircularImport }) => ({
@@ -703,6 +807,7 @@ export function updateModules(
     // (i.e. not used by the middleware).
     modules.every((mod) => mod.type !== 'js')
 
+  // 如果需要刷新页面，发送全页刷新指令
   if (needFullReload || isClientHtmlChange) {
     const reason =
       typeof needFullReload === 'string'
@@ -725,6 +830,7 @@ export function updateModules(
     return
   }
 
+  // 没有需要更新的模块 → 打印日志
   if (updates.length === 0) {
     debugHmr?.(colors.yellow(`no update happened `) + colors.dim(file))
     return
@@ -735,6 +841,7 @@ export function updateModules(
       colors.dim([...new Set(updates.map((u) => u.path))].join(', ')),
     { clear: !firstInvalidatedBy, timestamp: true },
   )
+  // 发送热更新到浏览器
   hot.send({
     type: 'update',
     updates,
@@ -753,6 +860,17 @@ function areAllImportsAccepted(
   return true
 }
 
+/**
+ * 作用：从当前修改的文件开始，向上遍历所有父模块直到找到：
+    1、能 accept 的模块（热更新边界）
+    2、不能 accept 的模块（→ 触发全页刷新）  
+ * @param node 
+ * @param traversedModules 
+ * @param boundaries 
+ * @param currentChain 
+ * @returns 
+ * 
+ */
 function propagateUpdate(
   node: EnvironmentModuleNode,
   traversedModules: Set<EnvironmentModuleNode>,
@@ -1090,19 +1208,39 @@ function error(pos: number) {
 // vitejs/vite#610 when hot-reloading Vue files, we read immediately on file
 // change event and sometimes this can be too early and get an empty buffer.
 // Poll until the file's modified time has changed before reading again.
+/**
+ * 现象：编辑器（VSCode）保存文件时，操作系统的执行顺序是：
+   1、清空文件内容（size = 0）
+   2、写入新内容
+   问题：
+Vite 的文件监听（chokidar）反应极快，在 第 1 步（清空）就触发了 change 事件。
+此时 Vite 马上去读文件 → 读到空字符串 → 导致编译报错。
+这个函数就是为了：等待文件写入完成，再返回正确内容，避免读到空文件。
+ * @param file 文件路径
+ * @returns 文件内容
+ */
 async function readModifiedFile(file: string): Promise<string> {
+  // 读取文件内容
   const content = await fsp.readFile(file, 'utf-8')
-  if (!content) {
-    const mtime = (await fsp.stat(file)).mtimeMs
 
+  // 如果文件内容为空，说明文件被删除了
+  // 文件刚刚被编辑器清空，但还没来得及写入新内容。
+  if (!content) {
+
+    const mtime = (await fsp.stat(file)).mtimeMs // 记录当前文件修改时间
+
+    // 循环等待：最多等 10 次，每次 10ms（共 100ms）
     for (let n = 0; n < 10; n++) {
       await new Promise((r) => setTimeout(r, 10))
       const newMtime = (await fsp.stat(file)).mtimeMs
+
+      // 如果文件变了（说明写入完成）
       if (newMtime !== mtime) {
         break
       }
     }
 
+    // 读取文件内容
     return await fsp.readFile(file, 'utf-8')
   } else {
     return content

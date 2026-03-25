@@ -8,12 +8,21 @@ import { withTrailingSlash } from '../shared/utils'
 import { arraify, normalizePath } from './utils'
 import type { Logger } from './logger'
 
+/**
+ * 获取解析后的输出目录
+ * @param root 项目根目录
+ * @param outDir 默认输出目录
+ * @param outputOptions 输出选项
+ * @returns 解析后的输出目录集合
+ */
 export function getResolvedOutDirs(
   root: string,
   outDir: string,
   outputOptions: OutputOptions[] | OutputOptions | undefined,
 ): Set<string> {
+  // 解析默认输出目录
   const resolvedOutDir = path.resolve(root, outDir)
+  // 没有输出选项时，返回默认输出目录
   if (!outputOptions) return new Set([resolvedOutDir])
 
   return new Set(
@@ -23,6 +32,14 @@ export function getResolvedOutDirs(
   )
 }
 
+/**
+ * 解析是否空输出输出目录
+ * @param emptyOutDir 是否空输出目录
+ * @param root 项目根目录
+ * @param outDirs 输出目录集合
+ * @param logger 日志记录器
+ * @returns 是否空输出目录
+ */
 export function resolveEmptyOutDir(
   emptyOutDir: boolean | null,
   root: string,

@@ -52,8 +52,14 @@ export interface DevEnvironmentContext {
   disableDepsOptimizer?: boolean
 }
 
+/**
+ * 开发环境
+ * @class
+ * @extends BaseEnvironment
+ */
 export class DevEnvironment extends BaseEnvironment {
   mode = 'dev' as const
+  // 环境中模块间的依赖关系图
   moduleGraph: EnvironmentModuleGraph
 
   depsOptimizer?: DepsOptimizer
@@ -71,6 +77,7 @@ export class DevEnvironment extends BaseEnvironment {
   }
   /**
    * @internal
+   * 插件容器，管理该环境下的 Vite 插件实例
    */
   _pluginContainer: EnvironmentPluginContainer<DevEnvironment> | undefined
 
@@ -80,6 +87,7 @@ export class DevEnvironment extends BaseEnvironment {
   _closing: boolean = false
   /**
    * @internal
+   * 记录正在进行的模块转换请求，用于等待它们完成再关闭服务器，避免资源泄漏。
    */
   _pendingRequests: Map<
     string,
@@ -91,22 +99,26 @@ export class DevEnvironment extends BaseEnvironment {
   >
   /**
    * @internal
+   * 用于检测模块图的静态导入是否已全部处理完毕
    */
   _crawlEndFinder: CrawlEndFinder
 
   /**
    * Hot channel for this environment. If not provided or disabled,
    * it will be a noop channel that does nothing.
+   * 热更新通道，用于向客户端发送 HMR 消息。
    *
    * @example
    * environment.hot.send({ type: 'full-reload' })
    */
   hot: NormalizedHotChannel
+
   constructor(
     name: string,
     config: ResolvedConfig,
     context: DevEnvironmentContext,
   ) {
+    // 获取环境对应的配置
     let options = config.environments[name]
     if (!options) {
       throw new Error(`Environment "${name}" is not defined in the config.`)
@@ -125,6 +137,7 @@ export class DevEnvironment extends BaseEnvironment {
       this.pluginContainer!.resolveId(url, undefined),
     )
 
+    // 初始化 _crawlEndFinder，用于检测模块依赖图是否爬取完成
     this._crawlEndFinder = setupOnCrawlEnd()
 
     this._remoteRunnerOptions = context.remoteRunner ?? {}
@@ -178,6 +191,11 @@ export class DevEnvironment extends BaseEnvironment {
     }
   }
 
+  /**
+   * 创建插件容器
+   * @param options 
+   * @returns 
+   */
   async init(options?: {
     watcher?: FSWatcher
     /**
@@ -187,10 +205,12 @@ export class DevEnvironment extends BaseEnvironment {
      */
     previousInstance?: DevEnvironment
   }): Promise<void> {
+    // 如果插件容器已初始化，直接返回
     if (this._initiated) {
       return
     }
-    this._initiated = true
+    this._initiated = true // 标记为已初始化
+    // 创建插件容器
     this._pluginContainer = await createEnvironmentPluginContainer(
       this,
       this.config.plugins,
@@ -200,16 +220,25 @@ export class DevEnvironment extends BaseEnvironment {
 
   /**
    * When the dev server is restarted, the methods are called in the following order:
+   * 启动环境服务
    * - new instance `init`
    * - previous instance `close`
    * - new instance `listen`
    */
   async listen(server: ViteDevServer): Promise<void> {
+    // 热更新通道监听
     this.hot.listen()
     await this.depsOptimizer?.init()
     warmupFiles(server, this)
   }
 
+  /**
+   * 
+   * @param id 
+   * @param importer 
+   * @param options 
+   * @returns 
+   */
   fetchModule(
     id: string,
     importer?: string,
@@ -221,6 +250,10 @@ export class DevEnvironment extends BaseEnvironment {
     })
   }
 
+  /**
+   * 
+   * @param module 
+   */
   async reloadModule(module: EnvironmentModuleNode): Promise<void> {
     if (this.config.server.hmr !== false && module.file) {
       updateModules(this, module.file, [module], monotonicDateNow())
@@ -235,6 +268,11 @@ export class DevEnvironment extends BaseEnvironment {
     return transformRequest(this, url, options)
   }
 
+  /**
+   * 预热请求
+   * @param url 
+   * @returns 
+   */
   async warmupRequest(url: string): Promise<void> {
     try {
       await this.transformRequest(url)

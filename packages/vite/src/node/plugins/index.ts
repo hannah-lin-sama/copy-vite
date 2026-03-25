@@ -157,6 +157,12 @@ export function createPluginHookUtils(
   }
 }
 
+/**
+ * 根据插件钩子名称排序插件
+ * @param hookName 插件钩子名称
+ * @param plugins 插件数组
+ * @returns 
+ */
 export function getSortedPluginsByHook<K extends keyof Plugin>(
   hookName: K,
   plugins: readonly Plugin[],
@@ -172,14 +178,17 @@ export function getSortedPluginsByHook<K extends keyof Plugin>(
     if (hook) {
       if (typeof hook === 'object') {
         if (hook.order === 'pre') {
+          // 插入 pre 插件
           sortedPlugins.splice(pre++, 0, plugin)
           continue
         }
         if (hook.order === 'post') {
+          // 插入 post 插件
           sortedPlugins.splice(pre + normal + post++, 0, plugin)
           continue
         }
       }
+      // 插入普通插件
       sortedPlugins.splice(pre + normal++, 0, plugin)
     }
   }
@@ -187,6 +196,11 @@ export function getSortedPluginsByHook<K extends keyof Plugin>(
   return sortedPlugins as PluginWithRequiredHook<K>[]
 }
 
+/**
+ * 获取插件钩子函数的处理函数
+ * @param hook 插件钩子函数
+ * @returns 
+ */
 export function getHookHandler<T extends ObjectHook<Function>>(
   hook: T,
 ): HookHandler<T> {

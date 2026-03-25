@@ -167,12 +167,21 @@ export class HMRContext implements ViteHotContext {
   }
 }
 
+/**
+ * HMR 客户端
+ * 登记模块、管理更新队列、执行销毁与替换、触发回调、清理资源。
+ */
 export class HMRClient {
+  // 存储：模块路径 → 模块热更新信息（accept 回调）
   public hotModulesMap: Map<string, HotModule> = new Map()
+  // 存储：模块路径 → dispose 销毁函数（清理副作用）
   public disposeMap: Map<string, (data: any) => void | Promise<void>> =
     new Map()
+  // 存储：模块路径 → prune 清理函数（文件删除时）
   public pruneMap: Map<string, (data: any) => void | Promise<void>> = new Map()
+  // 存储：模块间传递的自定义数据（dispose 数据）
   public dataMap: Map<string, any> = new Map()
+  // 存储：全局自定义事件监听
   public customListenersMap: CustomListenersMap = new Map()
   public ctxToListenersMap: Map<string, CustomListenersMap> = new Map()
   public currentFirstInvalidatedBy: string | undefined
@@ -181,26 +190,41 @@ export class HMRClient {
     public logger: HMRLogger,
     private transport: NormalizedModuleRunnerTransport,
     // This allows implementing reloading via different methods depending on the environment
+    // 下载新模块
     private importUpdatedModule: (update: Update) => Promise<ModuleNamespace>,
   ) {}
 
+  /**
+   * 触发自定义事件监听
+   * @param event 事件名称
+   * @param data 事件数据
+   */
   public async notifyListeners<T extends string>(
     event: T,
     data: InferCustomEventPayload<T>,
   ): Promise<void>
   public async notifyListeners(event: string, data: any): Promise<void> {
+    // 获取监听函数
     const cbs = this.customListenersMap.get(event)
     if (cbs) {
+      // 执行监听函数
       await Promise.allSettled(cbs.map((cb) => cb(data)))
     }
   }
 
+  /**
+   * 发送 HMR 消息
+   * @param payload HMR 消息 payload
+   */
   public send(payload: HotPayload): void {
     this.transport.send(payload).catch((err) => {
       this.logger.error(err)
     })
   }
 
+  /**
+   * 清理所有资源
+   */
   public clear(): void {
     this.hotModulesMap.clear()
     this.disposeMap.clear()
@@ -213,16 +237,24 @@ export class HMRClient {
   // After an HMR update, some modules are no longer imported on the page
   // but they may have left behind side effects that need to be cleaned up
   // (e.g. style injections)
+  /**
+   * 清理模块副作用
+   * @param paths 模块路径列表
+   */
   public async prunePaths(paths: string[]): Promise<void> {
     await Promise.all(
       paths.map((path) => {
+        // 获取要清理的模块路径的销毁函数
         const disposer = this.disposeMap.get(path)
+        // 执行销毁函数
         if (disposer) return disposer(this.dataMap.get(path))
       }),
     )
     await Promise.all(
       paths.map((path) => {
+        // 获取要清理的模块路径的清理函数
         const fn = this.pruneMap.get(path)
+        // 执行清理函数
         if (fn) {
           return fn(this.dataMap.get(path))
         }
@@ -230,6 +262,11 @@ export class HMRClient {
     )
   }
 
+  /**
+   * 警告热更新失败
+   * @param err 错误信息
+   * @param path 模块路径或路径列表
+   */
   protected warnFailedUpdate(err: Error, path: string | string[]): void {
     if (!(err instanceof Error) || !err.message.includes('fetch')) {
       this.logger.error(err)
@@ -241,13 +278,18 @@ export class HMRClient {
     )
   }
 
+  // 存储：热更新队列
   private updateQueue: Promise<(() => void) | undefined>[] = []
-  private pendingUpdateQueue = false
+  private pendingUpdateQueue = false // 标记当前是否有热更新正在执行
 
   /**
    * buffer multiple hot updates triggered by the same src change
    * so that they are invoked in the same order they were sent.
    * (otherwise the order may be inconsistent because of the http request round trip)
+   */
+  /**
+   * 缓存热更新
+   * @param payload 更新 payload
    */
   public async queueUpdate(payload: Update): Promise<void> {
     this.updateQueue.push(this.fetchUpdate(payload))
@@ -261,6 +303,11 @@ export class HMRClient {
     }
   }
 
+  /**
+   * 执行热更新
+   * @param update 更新 payload
+   * @returns 
+   */
   private async fetchUpdate(update: Update): Promise<(() => void) | undefined> {
     const { path, acceptedPath, firstInvalidatedBy } = update
     const mod = this.hotModulesMap.get(path)
