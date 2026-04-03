@@ -539,16 +539,18 @@ export async function _createServer(
     previousShortcutsState?: ShortcutsState<ViteDevServer>
   },
 ): Promise<ViteDevServer> {
-
+  // 1、解析配置与校验配置格式
   const config = isResolvedConfig(inlineConfig)
     ? inlineConfig
     : await resolveConfig(inlineConfig, 'serve') // 确保是 serve 命令
 
   // 检查该配置是否已经关联过服务器
+  // 防止同一个配置重复创建服务器，避免资源冲突
   if (usedConfigs.has(config)) {
     throw new Error(`There is already a server associated with the config.`)
   }
 
+  // 统一配置格式，确保是开发服务配置，避免构建配置错误
   if (config.command !== 'serve') {
     throw new Error(
       `Config was resolved for a "build", expected a "serve" command.`,
@@ -557,6 +559,7 @@ export async function _createServer(
 
   usedConfigs.add(config)
 
+  // 2、并行初始化非阻塞资源，提升启动速度：异步并行初始化，不阻塞主流程
   // 异步初始化 public 目录的文件列表
   const initPublicFilesPromise = initPublicFiles(config)
 
@@ -588,6 +591,7 @@ export async function _createServer(
     config.cacheDir,
   )
 
+  // 3、网络服务构建
   const middlewares = connect() as Connect.Server
 
   // middlewareMode 为 true 时，不解析 HTTP 服务器，以中间件模式创建；否则解析 HTTP 服务器
@@ -605,7 +609,8 @@ export async function _createServer(
     setClientErrorHandler(httpServer, config.logger)
   }
 
-  // eslint-disable-next-line eqeqeq
+  // 4、文件系统监听
+   
   // 检查是否启用文件监视
   const watchEnabled = serverConfig.watch !== null
   // 文件监视器实例化
@@ -625,6 +630,7 @@ export async function _createServer(
       ) as FSWatcher)
     : createNoopWatcher(resolvedWatchOptions)
 
+  // 5、多环境初始化
   // 初始化环境对象
   const environments: Record<string, DevEnvironment> = {}
 
@@ -649,15 +655,19 @@ export async function _createServer(
   )
 
   // Backward compatibility
-  // 向后兼容与服务器对象构建
+  // 6、向后兼容与服务器对象构建
+  // 未来弃用警告：server.moduleGraph 已废弃
   let moduleGraph = new ModuleGraph({
     client: () => environments.client.moduleGraph,
     ssr: () => environments.ssr.moduleGraph,
   })
+  // 创建一个插件容器，用于管理所有插件，并协调不同环境的插件调用
   let pluginContainer = createPluginContainer(environments)
 
+  // 创建一个用于关闭 HTTP 服务器的函数，处理可能的错误（如服务器未启动）并返回 Promise
   const closeHttpServer = createServerCloseFn(httpServer)
 
+  // 创建一个用于转换 HTML 的函数，该函数会在开发模式下处理 HTML 请求，注入客户端脚本、处理 base 路径等
   const devHtmlTransformFn = createDevHtmlTransformFn(config)
 
   // Promise used by `server.close()` to ensure `closeServer()` is only called once
@@ -674,8 +684,8 @@ export async function _createServer(
       watcher.close(), // 关闭文件监视器
       ws.close(), // 关闭 WebSocket 服务器
       Promise.allSettled(
-        Object.values(server.environments).map((environment) =>
-          environment.close(), // 关闭每个环境
+        Object.values(server.environments).map(
+          (environment) => environment.close(), // 关闭每个环境
         ),
       ),
       closeHttpServer(), // 关闭 HTTP 服务器
@@ -687,38 +697,52 @@ export async function _createServer(
 
   let hot = ws
 
-  // 构建 server 对象
+  // 7、构建 server 对象
   let server: ViteDevServer = {
     config,
+    // 中间件
     middlewares,
+    // HTTP 服务器
     httpServer,
+    // 文件监视器
     watcher,
     ws, // WebSocket 服务器实例
+    // 获取 WebSocket 服务器实例
     get hot() {
+      // server.hot 废弃，建议使用 this.environment.hot 替代
       warnFutureDeprecation(config, 'removeServerHot')
       return hot // 返回 WebSocket 服务器实例
     },
+    // 设置 WebSocket 服务器实例
     set hot(h) {
       hot = h // 设置 WebSocket 服务器实例
     },
 
+    // 多环境（Environments）
     environments,
     get pluginContainer() {
+      // server.pluginContainer 废弃，建议使用 this.environment.pluginContainer 替代
       warnFutureDeprecation(config, 'removeServerPluginContainer')
       return pluginContainer
     },
+    // 设置插件容器
     set pluginContainer(p) {
       pluginContainer = p
     },
+    // 模块图
     get moduleGraph() {
+      // server.moduleGraph 废弃，建议使用 this.environment.moduleGraph 替代
       warnFutureDeprecation(config, 'removeServerModuleGraph')
       return moduleGraph
     },
+    // 设置模块图
     set moduleGraph(graph) {
       moduleGraph = graph
     },
 
+    // 已解析的 URL
     resolvedUrls: null, // will be set on listen
+    // 转换 SSR 模块
     ssrTransform(
       code: string,
       inMap: SourceMap | { mappings: '' } | null,
@@ -732,23 +756,33 @@ export async function _createServer(
         },
       })
     },
+    // 转换请求
     transformRequest(url, options) {
+      // 弃用警告
       warnFutureDeprecation(config, 'removeServerTransformRequest')
       const environment = server.environments[options?.ssr ? 'ssr' : 'client']
       return environment.transformRequest(url)
     },
+    // 预热请求
     warmupRequest(url, options) {
+      // server.warmupRequest 废弃，建议使用 this.environment.warmupRequest 替代
       warnFutureDeprecation(config, 'removeServerWarmupRequest')
       const environment = server.environments[options?.ssr ? 'ssr' : 'client']
       return environment.warmupRequest(url)
     },
+    // 应用 Vite 内置的 HTML 转换和插件提供的 HTML 转换
     transformIndexHtml(url, html, originalUrl) {
+      // 将实际的 HTML 转换工作委托给 devHtmlTransformFn 函数。
+      // 应用 Vite 内置的 HTML 转换：包括注入 HMR (热模块替换) 客户端脚本、处理 base 路径、注入环境变量等
+      // 应用插件提供的 HTML 转换
       return devHtmlTransformFn(server, url, html, originalUrl)
     },
+    // 加载 SSR 模块
     async ssrLoadModule(url, opts?: { fixStacktrace?: boolean }) {
       warnFutureDeprecation(config, 'removeSsrLoadModule')
       return ssrLoadModule(url, server, opts?.fixStacktrace)
     },
+    // 修复 SSR 模块的栈跟踪
     ssrFixStacktrace(e) {
       warnFutureDeprecation(
         config,
@@ -757,6 +791,7 @@ export async function _createServer(
       )
       ssrFixStacktrace(e, server.environments.ssr.moduleGraph)
     },
+    // 重写 SSR 模块的栈跟踪
     ssrRewriteStacktrace(stack: string) {
       warnFutureDeprecation(
         config,
@@ -766,16 +801,23 @@ export async function _createServer(
       return ssrRewriteStacktrace(stack, server.environments.ssr.moduleGraph)
         .result
     },
+    // 重新加载模块
+    // 触发指定模块的热模块替换 (HMR)，使该模块在不刷新整个页面的情况下更新。
     async reloadModule(module) {
+      // server.reloadModule 废弃，建议使用 this.environment.reloadModule 替代
       warnFutureDeprecation(config, 'removeServerReloadModule')
+
+      // HRM功能启用、模块有文件路径
       if (serverConfig.hmr !== false && module.file) {
         // TODO: Should we also update the node moduleGraph for backward compatibility?
+        // 获取模块
         const environmentModule = (module._clientModule ?? module._ssrModule)!
+        // 触发模块更新
         updateModules(
-          environments[environmentModule.environment]!,
-          module.file,
-          [environmentModule],
-          monotonicDateNow(),
+          environments[environmentModule.environment]!, // 指定模块所在的环境
+          module.file, // 模块的文件路径
+          [environmentModule], // 要更新的模块数组，包含环境模块
+          monotonicDateNow(), // 当前时间戳，用于确保更新的顺序性
         )
       }
     },
@@ -803,6 +845,7 @@ export async function _createServer(
       }
       return server
     },
+    // 打开浏览器
     openBrowser() {
       const options = server.config.server
       const url = getServerUrlByHost(server.resolvedUrls, options.host)
@@ -847,12 +890,16 @@ export async function _createServer(
         server.config.logger.warn('No URL available to open in browser')
       }
     },
+    // 关闭服务器
     async close() {
+      // 如果没有关闭 Promise，创建一个
       if (!closeServerPromise) {
         closeServerPromise = closeServer()
       }
+      // 如果存在，说明已经有一个关闭操作在进行中，直接返回该 Promise
       return closeServerPromise
     },
+    // 打印服务器监听的 URL 地址
     printUrls() {
       // 打印服务器监听的 URL 地址
       if (server.resolvedUrls) {
@@ -873,14 +920,20 @@ export async function _createServer(
     bindCLIShortcuts(options) {
       bindCLIShortcuts(server, options)
     },
+    // 重启 Vite 开发服务器，同时处理并发重启请求，确保同一时间只有一个重启操作在执行。
     async restart(forceOptimize?: boolean) {
+      // 如果没有重启 Promise，创建一个
       if (!server._restartPromise) {
+        // 设置是否强制优化依赖
         server._forceOptimizeOnRestart = !!forceOptimize
+        // 重启服务器
         server._restartPromise = restartServer(server).finally(() => {
+          // 重启完成后，重置重启 Promise 和强制优化依赖
           server._restartPromise = null
           server._forceOptimizeOnRestart = false
         })
       }
+      // 如果存在，说明已经有一个重启操作在进行中，直接返回该 Promise
       return server._restartPromise
     },
 
@@ -888,13 +941,17 @@ export async function _createServer(
       return environments.client.waitForRequestsIdle(ignoredId)
     },
 
+    // 设置内部服务器实例
     _setInternalServer(_server: ViteDevServer) {
       // Rebind internal the server variable so functions reference the user
       // server instance after a restart
       server = _server
     },
+    // 重启服务器
     _restartPromise: null,
+    // 是否强制优化依赖
     _forceOptimizeOnRestart: false,
+    // 保存 CLI 短键状态
     _shortcutsState: options.previousShortcutsState,
   }
 
@@ -911,7 +968,7 @@ export async function _createServer(
 
   /**
    * 关闭服务器并退出进程
-   * @param _ 
+   * @param _
    * @param exitCode 退出码
    */
   const closeServerAndExit = async (_: unknown, exitCode?: number) => {
@@ -925,8 +982,10 @@ export async function _createServer(
     }
   }
 
+  // 8、生命周期与信号处理
   // 非中间件模式下,监听 SIGTERM 信号,关闭服务器并退出进程
   if (!middlewareMode) {
+    // Ctrl+C 退出时，优雅释放所有资源（文件监听、端口、WS 连接）
     setupSIGTERMListener(closeServerAndExit)
   }
 
@@ -946,7 +1005,7 @@ export async function _createServer(
   }
 
   /**
-   * 处理文件添加或删除事件
+   * 处理文件添加或删除
    * @param file 文件路径
    * @param isUnlink 是否删除文件
    */
@@ -959,6 +1018,8 @@ export async function _createServer(
     await Promise.all(
       // 通知所有环境的插件容器，同步文件变更事件
       Object.values(server.environments).map((environment) =>
+        // 对每个环境，调用其插件容器的 watchChange 方法
+        // 传递文件路径和事件类型（'delete' 或 'create'）
         environment.pluginContainer.watchChange(file, {
           event: isUnlink ? 'delete' : 'create',
         }),
@@ -973,11 +1034,16 @@ export async function _createServer(
         // 新增文件时：清理同名模块的 ETag 缓存，保证公共文件优先响应
         // Vite 会为模块生成 ETag（实体标签），用于「ETag 快速路径」—— 客户端请求时，若 ETag 未变，直接返回缓存的模块内容
         if (!isUnlink) {
+          // 获取客户端环境的模块图实例
           const clientModuleGraph = server.environments.client.moduleGraph
+          // 根据路径 path（如 /image.png）查找模块图中是否存在同名模块
           const moduleWithSamePath =
             await clientModuleGraph.getModuleByUrl(path)
 
           const etag = moduleWithSamePath?.transformResult?.etag
+
+          // 如果有etag ,则删除。
+          // 保证 public 下文件等优先级
           if (etag) {
             // The public file should win on the next request over a module with the
             // same path. Prevent the transform etag fast path from serving the module
@@ -997,13 +1063,16 @@ export async function _createServer(
     await onHMRUpdate(isUnlink ? 'delete' : 'create', file)
   }
 
+  // 9、文件变更事件处理
   // 监听文件变化事件
   watcher.on('change', async (file) => {
     file = normalizePath(file)
+    // 检查是否是 TypeScript 配置文件变化，如果是则重启服务器
     reloadOnTsconfigChange(server, file)
 
     await Promise.all(
       Object.values(server.environments).map((environment) =>
+        // 通知所有环境的插件容器文件已更新
         environment.pluginContainer.watchChange(file, { event: 'update' }),
       ),
     )
@@ -1011,6 +1080,7 @@ export async function _createServer(
     for (const environment of Object.values(server.environments)) {
       environment.moduleGraph.onFileChange(file)
     }
+    // 触发热模块替换更新，将变更同步到客户端
     await onHMRUpdate('update', file)
   })
 
@@ -1032,7 +1102,7 @@ export async function _createServer(
   }
 
   // Pre applied internal middlewares ------------------------------------------
-
+  // 10、中间件
   // request timer
   if (process.env.DEBUG) {
     // 用于记录请求处理时间
@@ -1087,6 +1157,7 @@ export async function _createServer(
   if (proxy) {
     const middlewareServer =
       (isObject(middlewareMode) ? middlewareMode.server : null) || httpServer
+
     middlewares.use(proxyMiddleware(middlewareServer, proxy, config))
   }
 
@@ -1174,7 +1245,7 @@ export async function _createServer(
   // this code is to avoid calling buildStart multiple times
   let initingServer: Promise<void> | undefined
   let serverInited = false // 标记服务器是否已初始化
-  
+
   const initServer = async (onListen: boolean) => {
     if (serverInited) return // 如果服务器已初始化,直接返回
     if (initingServer) return initingServer // 如果服务器正在初始化,直接返回
@@ -1273,7 +1344,6 @@ async function startServer(
 export function createServerCloseFn(
   server: HttpServer | null,
 ): () => Promise<void> {
-
   // 如果服务器实例不存在,直接返回空函数
   if (!server) {
     return () => Promise.resolve()
@@ -1439,15 +1509,15 @@ export async function resolveServerOptions(
 }
 
 /**
- * 重启 Vite 服务器
+ * 重启 Vite 开发服务器，确保配置变更能够生效，同时保持服务器实例的连续性。
  * @param server Vite 服务器实例
- * @returns 
+ * @returns
  */
 async function restartServer(server: ViteDevServer) {
   // 重置服务器启动时间
   global.__vite_start_time = performance.now()
 
-  let inlineConfig = server.config.inlineConfig 
+  let inlineConfig = server.config.inlineConfig
   // 合并配置
   if (server._forceOptimizeOnRestart) {
     inlineConfig = mergeConfig(inlineConfig, {
@@ -1503,9 +1573,12 @@ async function restartServer(server: ViteDevServer) {
     logger,
     server: { port, middlewareMode },
   } = server.config
+
+  // 非中间件模式处理
   if (!middlewareMode) {
     await server.listen(port, true)
   } else {
+    // 中间件模式：并行启动所有环境
     await Promise.all(
       Object.values(server.environments).map((e) => e.listen(server)),
     )
@@ -1516,6 +1589,7 @@ async function restartServer(server: ViteDevServer) {
     (server._shortcutsState as ShortcutsState<ViteDevServer> | undefined)
       ?.options
   ) {
+    // 绑定 CLI 快捷方式
     bindCLIShortcuts(
       server,
       { print: false },
@@ -1527,15 +1601,18 @@ async function restartServer(server: ViteDevServer) {
 
 /**
  * Internal function to restart the Vite server and print URLs if changed
+ * 重启 Vite 开发服务器，并在服务器配置（如端口、主机）或 DNS 顺序发生变化时，打印更新后的服务器 URL。
  */
 export async function restartServerWithUrls(
   server: ViteDevServer,
 ): Promise<void> {
+  // 中间件模式处理
   if (server.config.server.middlewareMode) {
     await server.restart()
     return
   }
 
+  // 保存重启前的状态
   const { port: prevPort, host: prevHost } = server.config.server
   const prevUrls = server.resolvedUrls
 
@@ -1545,12 +1622,15 @@ export async function restartServerWithUrls(
     logger,
     server: { port, host },
   } = server.config
+
+  // 检查端口、主机或 DNS 顺序是否发生变化
   if (
     (port ?? DEFAULT_DEV_PORT) !== (prevPort ?? DEFAULT_DEV_PORT) ||
     host !== prevHost ||
     diffDnsOrderChange(prevUrls, server.resolvedUrls)
   ) {
     logger.info('')
+    // 如果有任何变化，打印新的服务器 URL
     server.printUrls()
   }
 }

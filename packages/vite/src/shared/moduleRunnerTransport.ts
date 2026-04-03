@@ -42,15 +42,14 @@ function reviveInvokeError(e: any) {
 
 /**
  * 创建可调用模块运行时传输
- * 
+ *
  * @param transport 模块运行时传输
- * @returns 
+ * @returns
  */
 const createInvokeableTransport = (
   transport: ModuleRunnerTransport,
 ): InvokeableModuleRunnerTransport => {
-
-    // 如果 transport 自带 invoke 方法，直接返回
+  // 如果 transport 自带 invoke 方法，直接返回
   if (transport.invoke) {
     return {
       ...transport,
@@ -159,7 +158,7 @@ const createInvokeableTransport = (
 
       const { promise, resolve, reject } =
         promiseWithResolvers<ReturnType<Awaited<InvokeMethods[T]>>>()
-        // 设置超时
+      // 设置超时
       const timeout = transport.timeout ?? 60000
       let timeoutId: ReturnType<typeof setTimeout> | undefined
       if (timeout > 0) {
@@ -207,9 +206,9 @@ export interface NormalizedModuleRunnerTransport {
 
 /**
  * 规范模块运行时传输
- * 
+ *
  * @param transport 模块运行时传输
- * @returns 
+ * @returns
  */
 export const normalizeModuleRunnerTransport = (
   transport: ModuleRunnerTransport, // 模块运行时传输
@@ -285,9 +284,9 @@ export const normalizeModuleRunnerTransport = (
 
 /**
  * 创建 WebSocket 模块运行时传输
- * 
+ *
  * @param options 传输 options 选项
- * @returns 
+ * @returns
  */
 export const createWebSocketModuleRunnerTransport = (options: {
   // eslint-disable-next-line n/no-unsupported-features/node-builtins
@@ -302,6 +301,7 @@ export const createWebSocketModuleRunnerTransport = (options: {
   // eslint-disable-next-line n/no-unsupported-features/node-builtins
   let ws: WebSocket | undefined
   let pingIntervalId: ReturnType<typeof setInterval> | undefined
+
   return {
     // 连接 WebSocket 服务器
     // @param onMessage 消息事件回调
@@ -330,7 +330,7 @@ export const createWebSocketModuleRunnerTransport = (options: {
               isOpened = true // 标记连接已打开
               resolve()
             },
-            { once: true },
+            { once: true }, // 只监听一次
           )
           // 监听关闭事件
           socket.addEventListener('close', async () => {
@@ -339,6 +339,7 @@ export const createWebSocketModuleRunnerTransport = (options: {
               return
             }
 
+            // 发送断开连接消息
             onMessage({
               type: 'custom',
               event: 'vite:ws:disconnect',
@@ -349,6 +350,7 @@ export const createWebSocketModuleRunnerTransport = (options: {
         })
       }
 
+      // 发送连接确认消息
       onMessage({
         type: 'custom',
         event: 'vite:ws:connect',
@@ -360,6 +362,7 @@ export const createWebSocketModuleRunnerTransport = (options: {
       // so send ping package let ws keep alive.
       pingIntervalId = setInterval(() => {
         if (socket.readyState === socket.OPEN) {
+          // 发送心跳包
           socket.send(JSON.stringify({ type: 'ping' }))
         }
       }, pingInterval)

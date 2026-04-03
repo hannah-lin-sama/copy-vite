@@ -210,6 +210,7 @@ cli
   .action(
     async (
       root: string,
+      // 命令行参数选项
       options: ServerOptions & ExperimentalDevOptions & GlobalCLIOptions,
     ) => {
       // 去除重复的配置项
@@ -246,7 +247,7 @@ cli
         const info = server.config.logger.info
 
         const modeString =
-        // 非 development 模式，输出环境模式
+          // 非 development 模式，输出环境模式
           options.mode && options.mode !== 'development'
             ? `  ${colors.bgGreen(` ${colors.bold(options.mode)} `)}`
             : ''
@@ -388,7 +389,7 @@ cli
           colors.red(`error during build:\n${inspect(e)}`),
           { error: e },
         )
-        
+
         // 退出进程，状态码为 1 表示错误
         process.exit(1)
       } finally {

@@ -28,7 +28,7 @@ import type { HttpServer } from '.'
  */
 const WebSocketServerRaw = process.versions.bun
   ? // @ts-expect-error: Bun defines `import.meta.require`
-  // import.meta.require 是 Bun 独有的同步模块加载 API，用于在 ESM 中加载 CommonJS 模块（类似于 Node.js 的 require）
+    // import.meta.require 是 Bun 独有的同步模块加载 API，用于在 ESM 中加载 CommonJS 模块（类似于 Node.js 的 require）
     import.meta.require('ws').WebSocketServer
   : WebSocketServerRaw_
 
@@ -81,6 +81,7 @@ export interface WebSocketClient extends NormalizedHotChannelClient {
   socket: WebSocketTypes
 }
 
+// WebSocket 服务器支持的事件类型
 const wsServerEvents = [
   'connection',
   'error',
@@ -102,11 +103,20 @@ function noop() {
 //
 // using the query params means the token might be logged out in server or middleware logs
 // but we assume that is not an issue since the token is regenerated for each process
+/**
+ * 验证 WebSocket 连接请求中的令牌是否与服务器配置中的令牌匹配，
+ * 确保只有合法的客户端能够建立 WebSocket 连接。
+ * @param config
+ * @param url
+ * @returns
+ */
 function hasValidToken(config: ResolvedConfig, url: URL) {
+  // 从 URL 查询参数中获取令牌
   const token = url.searchParams.get('token')
-  if (!token) return false
+  if (!token) return false // 验证失败
 
   try {
+    // timingSafeEqual 函数可以防止计时攻击（timing attack），确保比较操作的执行时间与输入无关
     const isValidToken = crypto.timingSafeEqual(
       Buffer.from(token),
       Buffer.from(config.webSocketToken),
@@ -117,7 +127,8 @@ function hasValidToken(config: ResolvedConfig, url: URL) {
 }
 
 /**
- * 创建 WebSocket 服务器
+ * 创建和配置 WebSocket 服务器，为 Vite 的热模块替换 (HMR) 功能提供实时通信通道。
+ * 它支持两种部署模式：与主 HTTP 服务器共享端口，或使用独立端口。
  * @param server HTTP 服务器实例
  * @param config 配置对象
  * @param httpsOptions HTTPS 服务器选项
@@ -128,7 +139,6 @@ export function createWebSocketServer(
   config: ResolvedConfig,
   httpsOptions?: HttpsServerOptions,
 ): WebSocketServer {
-
   // 如果配置中禁用了 WebSocket，直接返回一个空的 WebSocket 服务器
   if (config.server.ws === false) {
     return {
@@ -168,7 +178,7 @@ export function createWebSocketServer(
   const hmrPort = hmr && hmr.port
 
   // TODO: the main server port may not have been chosen yet as it may use the next available
- // HMR未配置端口 或者  HMR 端口与主服务器端口一致
+  // HMR未配置端口 或者  HMR 端口与主服务器端口一致
   const portsAreCompatible = !hmrPort || hmrPort === config.server.port
   // 用户显式指定了 hmr.server
   // 主服务器存在，则复用主服务器
@@ -201,6 +211,7 @@ export function createWebSocketServer(
     // this is fine because vite-ping does not receive / send any meaningful data
     if (protocol === 'vite-ping') return true
 
+    // 检查请求是否来自允许的主机地址
     if (
       allowedHosts !== true &&
       !isHostAllowed(req.headers.host, allowedHosts)
@@ -208,12 +219,14 @@ export function createWebSocketServer(
       return false
     }
 
+    // 如果配置中禁用了 WebSocket 令牌检查，直接返回 true
     if (config.legacy?.skipWebSocketTokenCheck) {
       return true
     }
 
     // If the Origin header is set, this request might be coming from a browser.
     // Browsers always sets the Origin header for WebSocket connections.
+    // 检查请求是否来自浏览器
     if (req.headers.origin) {
       const parsedUrl = new URL(`http://example.com${req.url!}`)
       return hasValidToken(config, parsedUrl)
@@ -235,10 +248,22 @@ export function createWebSocketServer(
       // vite-ping is allowed to connect from anywhere
       // we close the connection immediately without connection event
       // so that the client does not get included in `wss.clients`
+      // vite-ping 允许从任何地方连接
+      // 立即关闭连接，不触发 connection 事件
+      // 资源优化：
+      // 1、vite-ping 协议的设计目的是用于服务器可用性检测，而非建立持久连接。
+      // 2、立即关闭可以避免占用服务器资源（如内存、文件描述符）
+      // 协议设计：
+      // 1、作为一种"ping"机制，其语义就是"确认存在后立即结束"
+      // 2、类似于 HTTP 的 HEAD 请求，只需要服务器响应，不需要保持连接
+      // 安全性：
+      // 1、vite-ping 允许从任何地方连接（跳过了主机验证和令牌检查）
+      // 立即关闭可以防止潜在的滥用，避免未授权的持久连接
       if (isPing) {
         ws.close(/* Normal Closure */ 1000)
         return
       }
+      // 其他连接，触发 connection 事件
       wss.emit('connection', ws, req)
     })
   }
@@ -257,15 +282,17 @@ export function createWebSocketServer(
       // 获取 WebSocket 升议头
       const protocol = req.headers['sec-websocket-protocol']!
       const parsedUrl = new URL(`http://example.com${req.url!}`)
+
+      // 只处理 vite-hrm、vite-ping 升级请求
       if (
         [HMR_HEADER, 'vite-ping'].includes(protocol) &&
         parsedUrl.pathname === hmrBase
       ) {
+        // 处理升级请求
         handleUpgrade(req, socket as Socket, head, protocol === 'vite-ping')
       }
     }
     wsServer.on('upgrade', hmrServerWsListener)
-
   } else {
     // http server request handler keeps the same with
     // https://github.com/websockets/ws/blob/45e17acea791d865df6b255a55182e9c42e5877a/lib/websocket-server.js#L88-L96
@@ -301,7 +328,7 @@ export function createWebSocketServer(
       }
       handleUpgrade(req, socket as Socket, head, protocol === 'vite-ping')
     })
-    
+
     wsHttpServer.on('error', (e: Error & { code: string; port: number }) => {
       if (e.code === 'EADDRINUSE') {
         config.logger.error(
@@ -378,8 +405,11 @@ export function createWebSocketServer(
 
   // Provide a wrapper to the ws client so we can send messages in JSON format
   // To be consistent with server.ws.send
+  // 处理websocket连接
   function getSocketClient(socket: WebSocketRaw) {
+    // 检查连接是否已存在
     if (!clientsMap.has(socket)) {
+      // 如果不存在，创建一个新的客户端实例
       clientsMap.set(socket, {
         send: (...args: any[]) => {
           let payload: HotPayload
@@ -406,10 +436,14 @@ export function createWebSocketServer(
   // connected client.
   // The same thing may happen when the optimizer runs fast enough to
   // finish the bundling before the client connects.
+  // 消息缓冲机制，处理服务器在客户端连接前需要发送消息的情况
+  // 主要用于错误消息和全量重载消息
   let bufferedMessage: ErrorPayload | FullReloadPayload | null = null
 
+  // 规范化热更新通道
   const normalizedHotChannel = normalizeHotChannel(
     {
+      // 发送消息
       send(payload) {
         if (
           (payload.type === 'error' || payload.type === 'full-reload') &&
@@ -427,18 +461,22 @@ export function createWebSocketServer(
           }
         })
       },
+      // 用于注册监听器
       on(event: string, fn: any) {
         if (!customListeners.has(event)) {
           customListeners.set(event, new Set())
         }
         customListeners.get(event)!.add(fn)
       },
+      // 用于移除事件监听器
       off(event: string, fn: any) {
         customListeners.get(event)?.delete(fn)
       },
+      // 启动服务器
       listen() {
         wsHttpServer?.listen(port, host)
       },
+      // 关闭服务器
       close() {
         // should remove listener if hmr.server is set
         // otherwise the old listener swallows all WebSocket connections
@@ -469,22 +507,29 @@ export function createWebSocketServer(
         })
       },
     },
+    // 是否启用HMR
     config.server.hmr !== false,
     // Don't normalize client as we already handles the send, and to keep `.socket`
+    // 是否客户端
     false,
   )
+
+  // 返回 WebSocket 服务器实例
   return {
     ...normalizedHotChannel,
 
     on: ((event: string, fn: any) => {
       if (wsServerEvents.includes(event)) {
+        // 监听 WebSocket 事件
         wss.on(event, fn)
         return
       }
       normalizedHotChannel.on(event, fn)
     }) as WebSocketServer['on'],
+
     off: ((event: string, fn: any) => {
       if (wsServerEvents.includes(event)) {
+        // 移除 WebSocket 事件监听
         wss.off(event, fn)
         return
       }

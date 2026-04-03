@@ -2,17 +2,18 @@ import type { HotPayload } from '#types/hmrPayload'
 
 // updates to HMR should go one after another. It is possible to trigger another update during the invalidation for example.
 /**
- * 创建 HMR 处理函数队列
- * 
+ * 创建一个包装函数，确保 HMR 消息处理函数按顺序执行，避免并发处理导致的问题。
+ *
  * @param handler 处理函数
- * @returns 
+ * @returns
  */
 export function createHMRHandler(
   handler: (payload: HotPayload) => Promise<void>,
 ): (payload: HotPayload) => Promise<void> {
-  // 处理函数队列
-  // 用于确保处理函数按顺序执行，避免并发调用导致的问题
+  // 创建一个 Queue 实例，用于存储和管理待执行的处理函数
   const queue = new Queue()
+  // 返回一个函数
+  // 将 handler(payload) 作为任务加入队列
   return (payload) => queue.enqueue(() => handler(payload))
 }
 

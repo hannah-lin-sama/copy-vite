@@ -29,6 +29,15 @@ export interface SendOptions {
   map?: SourceMap | { mappings: '' } | null
 }
 
+/**
+ * 发送响应
+ * @param req 请求对象
+ * @param res 响应对象
+ * @param content 响应内容
+ * @param type 响应类型
+ * @param options 响应选项
+ * @returns
+ */
 export function send(
   req: IncomingMessage,
   res: ServerResponse,
@@ -43,10 +52,12 @@ export function send(
     map,
   } = options
 
+  // 响应已结束，直接返回
   if (res.writableEnded) {
     return
   }
 
+  // 缓存验证，响应未过期，直接返回
   if (req.headers['if-none-match'] === etag) {
     res.statusCode = 304
     res.end()
@@ -57,6 +68,7 @@ export function send(
   res.setHeader('Cache-Control', cacheControl)
   res.setHeader('Etag', etag)
 
+  // 自定义响应头
   if (headers) {
     for (const name in headers) {
       res.setHeader(name, headers[name]!)
@@ -64,6 +76,7 @@ export function send(
   }
 
   // inject source map reference
+  // 源文件映射
   if (map && 'version' in map && map.mappings) {
     if (type === 'js' || type === 'css') {
       content = getCodeWithSourcemap(type, content.toString(), map)
@@ -92,6 +105,7 @@ export function send(
   }
 
   res.statusCode = 200
+  // 处理 HEAD 请求，只发送响应头，不发送响应体
   if (req.method === 'HEAD') {
     res.end()
   } else {

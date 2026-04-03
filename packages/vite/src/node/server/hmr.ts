@@ -173,10 +173,13 @@ export const normalizeHotChannel = (
   enableHmr: boolean,
   normalizeClient = true,
 ): NormalizedHotChannel => {
+  // 用于存储事件监听器的映射
   const normalizedListenerMap = new WeakMap<
     (data: any, client: NormalizedHotChannelClient) => void | Promise<void>,
     (data: any, client: HotChannelClient) => void | Promise<void>
   >()
+
+  // 用于存储客户端的映射
   const normalizedClients = new WeakMap<
     HotChannelClient,
     NormalizedHotChannelClient
@@ -186,6 +189,7 @@ export const normalizeHotChannel = (
   let listenerForInvokeHandler:
     | ((data: InvokeSendData, client: HotChannelClient) => void)
     | undefined
+
   const handleInvoke = async <T extends keyof InvokeMethods>(
     payload: HotPayload,
   ) => {
@@ -220,10 +224,12 @@ export const normalizeHotChannel = (
 
   return {
     ...channel,
+    // 用于注册事件监听器
     on: (
       event: string,
       fn: (data: any, client: NormalizedHotChannelClient) => void,
     ) => {
+      // 处理连接事件
       if (event === 'connection' || !normalizeClient) {
         channel.on?.(event, fn as () => void)
         return
@@ -233,6 +239,7 @@ export const normalizeHotChannel = (
         data: any,
         client: HotChannelClient,
       ) => {
+        // 处理客户端事件
         if (!normalizedClients.has(client)) {
           normalizedClients.set(client, {
             send: (...args) => {
@@ -250,14 +257,19 @@ export const normalizeHotChannel = (
             },
           })
         }
+        // 调用事件监听器
         fn(data, normalizedClients.get(client)!)
       }
+      // 存储事件监听器的映射
       normalizedListenerMap.set(fn, listenerWithNormalizedClient)
 
+      // 注册事件监听器
       channel.on?.(event, listenerWithNormalizedClient)
     },
+    // 用于移除事件监听器
     off: (event: string, fn: () => void) => {
       if (event === 'connection' || !normalizeClient) {
+        // 移除连接事件监听器
         channel.off?.(event, fn as () => void)
         return
       }
@@ -267,19 +279,27 @@ export const normalizeHotChannel = (
         channel.off?.(event, normalizedListener)
       }
     },
+    /**
+     * 设置远程调用处理器，用于处理客户端发起的远程方法调用。
+     * @param _invokeHandlers
+     * @returns
+     */
     setInvokeHandler(_invokeHandlers) {
       invokeHandlers = _invokeHandlers
       if (!_invokeHandlers) {
         if (listenerForInvokeHandler) {
+          // 移除调用处理程序
           channel.off?.('vite:invoke', listenerForInvokeHandler)
         }
         return
       }
 
       listenerForInvokeHandler = async (payload, client) => {
+        // 生成响应调用 ID
         const responseInvoke = payload.id.replace('send', 'response') as
           | 'response'
           | `response:${string}`
+        // 发送调用响应
         client.send({
           type: 'custom',
           event: 'vite:invoke',
@@ -294,21 +314,33 @@ export const normalizeHotChannel = (
           } satisfies InvokeResponseData,
         })
       }
+      // 注册 vite:invoke 事件的调用处理程序
       channel.on?.('vite:invoke', listenerForInvokeHandler)
     },
+    // 用于处理调用
     handleInvoke,
+    /**
+     * 发送消息到热通道，支持两种消息格式
+     * 1、字符串事件名和数据
+     * 2、完整的消息对象
+     * @param args
+     */
     send: (...args: any[]) => {
       let payload: HotPayload
+      // 构建消息 payload
+      // 如果第一个参数是字符串，说明是自定义事件
       if (typeof args[0] === 'string') {
         payload = {
-          type: 'custom',
+          type: 'custom', // 自定义事件
           event: args[0],
           data: args[1],
         }
+        // 非自定义事件，直接发送 payload
       } else {
         payload = args[0]
       }
 
+      // 消息过滤，只发送连接、心跳、自定义事件和错误事件
       if (
         enableHmr ||
         payload.type === 'connected' ||
@@ -319,9 +351,11 @@ export const normalizeHotChannel = (
         channel.send?.(payload)
       }
     },
+    // 启动服务器
     listen() {
       return channel.listen?.()
     },
+    // 关闭服务器
     close() {
       return channel.close?.()
     },
@@ -369,18 +403,17 @@ function getSortedHotUpdatePlugins(environment: Environment): Plugin[] {
 }
 
 /**
- * 处理 HMR 更新
+ * 处理文件系统中的文件变更事件，根据变更类型和文件类型，决定是重启服务器、刷新页面还是执行热模块替换。
  * @param type 文件变化类型
  * @param file 文件路径
  * @param server 服务器实例
- * @returns 
+ * @returns
  */
 export async function handleHMRUpdate(
   type: 'create' | 'delete' | 'update',
   file: string,
   server: ViteDevServer,
 ): Promise<void> {
-
   // 获取服务器配置
   const { config } = server
   const mixedModuleGraph = ignoreDeprecationWarnings(() => server.moduleGraph)
@@ -400,7 +433,7 @@ export async function handleHMRUpdate(
     config.envDir !== false &&
     getEnvFilesForMode(config.mode, config.envDir).includes(file)
 
-    // 配置文件、配置文件依赖、环境文件变化时，自动重启服务器
+  // 配置文件、配置文件依赖、环境文件变化时，自动重启服务器
   if (isConfig || isConfigDependency || isEnv) {
     // auto restart server
     debugHmr?.(`[config change] ${colors.dim(shortFile)}`)
@@ -467,19 +500,13 @@ export async function handleHMRUpdate(
   // 遍历所有环境（client /ssr），找出文件变更后「需要被热更新的模块」。
   for (const environment of Object.values(server.environments)) {
     //  找到当前文件对应的所有模块
-    /**
-     * 例如：src/App.vue → 可能生成：
-      src/App.vue
-      src/App.vue?vue&type=script
-      src/App.vue?vue&type=template
-     */
     const mods = new Set(environment.moduleGraph.getModulesByFile(file))
 
     // 如果是【文件新增】，把之前解析失败的模块也加进来重试
     /**
      * 场景：你先 import './Hello.vue'，但文件还没创建 → Vite 报错：模块不存在。
      * 你创建了 Hello.vue → 文件类型是 create。
-     * Vite 会：把之前解析失败的模块重新加入热更新列表，让它们重试加载。  
+     * Vite 会：把之前解析失败的模块重新加入热更新列表，让它们重试加载。
      * 作用：文件创建后，自动修复之前的导入错误，不需要刷新页面。
      */
     if (type === 'create') {
@@ -495,11 +522,11 @@ export async function handleHMRUpdate(
     hotMap.set(environment, { options })
   }
 
-/*  
-  背景：Vite 现在有 两套模块图
-  新架构：client、ssr 完全隔离（环境独立）
-  旧架构： mixedModuleGraph 混合在一起（不区分环境）
-*/
+  /*  
+    背景：Vite 现在有 两套模块图
+    新架构：client、ssr 完全隔离（环境独立）
+    旧架构： mixedModuleGraph 混合在一起（不区分环境）
+  */
   // mixedMods 混合模块
   const mixedMods = new Set(mixedModuleGraph.getModulesByFile(file))
   // 专门给 plugin.handleHotUpdate 旧钩子使用的上下文。
@@ -523,9 +550,9 @@ export async function handleHMRUpdate(
   const clientHotUpdateOptions = hotMap.get(clientEnvironment)!.options
   const ssrHotUpdateOptions = hotMap.get(ssrEnvironment)?.options
 
-  // 遍历所有插件 
-  // → 执行它们的热更新钩子 
-  // → 过滤 / 修改要更新的模块 
+  // 遍历所有插件
+  // → 执行它们的热更新钩子
+  // → 过滤 / 修改要更新的模块
   // → 同步回 client /ssr/mixed 三套模块系统同时完美兼容新钩子（hotUpdate）+ 旧钩子（handleHotUpdate）。
   try {
     for (const plugin of getSortedHotUpdatePlugins(
@@ -649,7 +676,7 @@ export async function handleHMRUpdate(
   /**
    * 处理热更新：决定是刷新页面、忽略、还是真正热替换模块
    * @param environment 环境
-   * @returns 
+   * @returns
    */
   async function hmr(environment: DevEnvironment) {
     try {
@@ -700,7 +727,7 @@ export async function handleHMRUpdate(
   }
 
   const hotUpdateEnvironments =
-  // 热更新环境配置
+    // 热更新环境配置
     server.config.server.hotUpdateEnvironments ??
     ((server, hmr) => {
       // Run HMR in parallel for all environments by default
@@ -718,27 +745,31 @@ export async function handleHMRUpdate(
 type HasDeadEnd = string | boolean
 
 /**
- * 负责计算热更新边界 → 决定是否刷新页面 → 生成更新消息 → 发送给浏览器。
+ * 计算模块更新的边界，生成热更新指令，并发送到客户端，实现模块的热更新或全页刷新
  * @param environment 环境
  * @param file 文件路径
  * @param modules 模块列表
  * @param timestamp 时间戳
- * @param firstInvalidatedBy 
- * @returns 
+ * @param firstInvalidatedBy
+ * @returns
  */
 export function updateModules(
   environment: DevEnvironment,
   file: string,
   modules: EnvironmentModuleNode[],
   timestamp: number,
+  // 第一个失效的模块 URL
   firstInvalidatedBy?: string,
 ): void {
   const { hot } = environment
-  const updates: Update[] = [] // 要发送给浏览器的更新列表
-  const invalidatedModules = new Set<EnvironmentModuleNode>() // 已失效的模块
-  const traversedModules = new Set<EnvironmentModuleNode>()  // 遍历过的模块（防止循环）
+
+  // 存储要发送给浏览器的热更新指令
+  const updates: Update[] = []
+  // 已失效的模块
+  const invalidatedModules = new Set<EnvironmentModuleNode>()
+  const traversedModules = new Set<EnvironmentModuleNode>() // 遍历过的模块（防止循环）
   // Modules could be empty if a root module is invalidated via import.meta.hot.invalidate()
-  // 是否需要全页刷新
+  // 标记是否需要全页刷新
   let needFullReload: HasDeadEnd = modules.length === 0
 
   // 遍历所有需要更新的模块
@@ -836,6 +867,7 @@ export function updateModules(
     return
   }
 
+  // 记录热更新的模块路径
   environment.logger.info(
     colors.green(`hmr update `) +
       colors.dim([...new Set(updates.map((u) => u.path))].join(', ')),
@@ -861,15 +893,13 @@ function areAllImportsAccepted(
 }
 
 /**
- * 作用：从当前修改的文件开始，向上遍历所有父模块直到找到：
-    1、能 accept 的模块（热更新边界）
-    2、不能 accept 的模块（→ 触发全页刷新）  
- * @param node 
- * @param traversedModules 
- * @param boundaries 
- * @param currentChain 
- * @returns 
- * 
+ * 向上传播模块更新，计算热更新的边界。它从发生变化的模块开始，向上遍历依赖链，寻找可以接受热更新的模块边界
+ * @param node  当前模块
+ * @param traversedModules 遍历过的模块集合
+ * @param boundaries 热更新边界数组
+ * @param currentChain 当前依赖链
+ * @returns true 表示可以热更新，false 表示需要全页刷新
+ *
  */
 function propagateUpdate(
   node: EnvironmentModuleNode,
@@ -877,14 +907,17 @@ function propagateUpdate(
   boundaries: PropagationBoundary[],
   currentChain: EnvironmentModuleNode[] = [node],
 ): HasDeadEnd {
+  // 循环检测：检查模块是否已经遍历过，避免循环依赖导致的无限遍历
   if (traversedModules.has(node)) {
     return false
   }
+  // 添加当前模块到遍历过的模块集合
   traversedModules.add(node)
 
   // #7561
   // if the imports of `node` have not been analyzed, then `node` has not
   // been loaded in the browser and we should stop propagation.
+  // 说明它尚未在浏览器中加载，停止传播
   if (node.id && node.isSelfAccepting === undefined) {
     debugHmr?.(
       `[propagate update] stop propagation because not analyzed: ${colors.dim(
@@ -894,12 +927,15 @@ function propagateUpdate(
     return false
   }
 
+  // 自接受模块处理
+  // 通过 import.meta.hot.accept() 声明的模块，可以接受自身的热更新
   if (node.isSelfAccepting) {
     // isSelfAccepting is only true for js and css
     const boundary = node as EnvironmentModuleNode & { type: 'js' | 'css' }
     boundaries.push({
-      boundary,
-      acceptedVia: boundary,
+      boundary, // 边界模块节点
+      acceptedVia: boundary, // 被接受模块节点
+      // 是否在循环导入链中
       isWithinCircularImport: isNodeWithinCircularImports(node, currentChain),
     })
     return false
@@ -910,6 +946,7 @@ function propagateUpdate(
   // are used outside of me".
   // Also, the imported module (this one) must be updated before the importers,
   // so that they do get the fresh imported module when/if they are reloaded.
+  // 部分接受模块处理
   if (node.acceptedHmrExports) {
     // acceptedHmrExports is only true for js and css
     const boundary = node as EnvironmentModuleNode & { type: 'js' | 'css' }
@@ -924,6 +961,7 @@ function propagateUpdate(
     }
   }
 
+  // 遍历导入者
   for (const importer of node.importers) {
     const subChain = currentChain.concat(importer)
 
@@ -970,6 +1008,7 @@ function propagateUpdate(
  * @param currentChain The current chain tracked from the `node` parameter
  * @param traversedModules The set of modules that have traversed
  */
+// 用于检测模块是否在循环导入链中。它通过分析模块的导入关系，确定是否存在包含 HMR 接受模块的循环导入
 function isNodeWithinCircularImports(
   node: EnvironmentModuleNode,
   nodeChain: EnvironmentModuleNode[],
@@ -992,17 +1031,23 @@ function isNodeWithinCircularImports(
   // It works by checking if any `node` importers are within `nodeChain`, which
   // means there's an import loop with a HMR-accepted module in it.
 
+  // 检查模块是否已经遍历过，避免循环依赖导致的无限遍历
   if (traversedModules.has(node)) {
     return false
   }
+  // 添加到已遍历集合
   traversedModules.add(node)
 
+  // 遍历导入者
   for (const importer of node.importers) {
     // Node may import itself which is safe
+    // 检查导入者是否是当前节点，如果是，则跳过
     if (importer === node) continue
 
     // Check circular imports
+    // 检查当前导入是否在当前导入链中
     const importerIndex = nodeChain.indexOf(importer)
+    // 在导入链中
     if (importerIndex > -1) {
       // Log extra debug information so users can fix and remove the circular imports
       if (debugHmr) {
@@ -1021,11 +1066,14 @@ function isNodeWithinCircularImports(
             importChain.map((m) => colors.dim(m.url)).join(' -> '),
         )
       }
+      // 发现循环导入，返回 true
       return true
     }
 
     // Continue recursively
+    // 不存在当前导入链中
     if (!currentChain.includes(importer)) {
+      // 递归检查
       const result = isNodeWithinCircularImports(
         importer,
         nodeChain,
@@ -1038,6 +1086,9 @@ function isNodeWithinCircularImports(
   return false
 }
 
+/**
+ * 用于处理被修剪（pruned）的模块，更新它们的 HMR 时间戳并通知客户端
+ */
 export function handlePrunedModules(
   mods: Set<EnvironmentModuleNode>,
   { hot }: DevEnvironment,
@@ -1046,11 +1097,16 @@ export function handlePrunedModules(
   // since if it's re-imported, it should re-apply side effects
   // and without the timestamp the browser will not re-import it!
   const t = monotonicDateNow()
+  // 遍历
   mods.forEach((mod) => {
+    // 时间戳更新
     mod.lastHMRTimestamp = t
+    // 重置失效
     mod.lastHMRInvalidationReceived = false
     debugHmr?.(`[dispose] ${colors.dim(mod.file)}`)
   })
+  // 通知客户端
+  // 客户端处理：客户端接收到消息后，会从内存中移除这些模块，确保它们在重新导入时能够重新执行
   hot.send({
     type: 'prune',
     paths: [...mods].map((m) => m.url),
@@ -1226,7 +1282,6 @@ async function readModifiedFile(file: string): Promise<string> {
   // 如果文件内容为空，说明文件被删除了
   // 文件刚刚被编辑器清空，但还没来得及写入新内容。
   if (!content) {
-
     const mtime = (await fsp.stat(file)).mtimeMs // 记录当前文件修改时间
 
     // 循环等待：最多等 10 次，每次 10ms（共 100ms）
