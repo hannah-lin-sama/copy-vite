@@ -1,5 +1,6 @@
 declare const __DEFINES__: Record<string, any>
 
+// 获取当前上下文对象，用于挂载全局变量
 const context = (() => {
   if (typeof globalThis !== 'undefined') {
     return globalThis

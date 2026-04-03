@@ -207,12 +207,20 @@ const createTemplate = () =>
     h('style', { nonce: cspNonce }, templateStyle),
   )
 
+// (?:file:\/\/)? 匹配可选的 file:// 协议前缀
+// (?:[a-zA-Z]:\\|\/) 匹配 Windows 风格盘符（如 C:\）或 Unix 风格根目录（/）
+// :\d+:\d+ 匹配冒号后跟两个或多个数字，再跟冒号和两个或多个数字
 const fileRE = /(?:file:\/\/)?(?:[a-zA-Z]:\\|\/).*?:\d+:\d+/g
+
 const codeframeRE = /^(?:>?\s*\d+\s+\|.*|\s+\|\s*\^.*)\r?\n/gm
 
 // Allow `ErrorOverlay` to extend `HTMLElement` even in environments where
 // `HTMLElement` was not originally defined.
 const { HTMLElement = class {} as typeof globalThis.HTMLElement } = globalThis
+
+/**
+ * 错误覆盖层元素，用于在错误发生时显示错误信息。
+ */
 export class ErrorOverlay extends HTMLElement {
   root: ShadowRoot
   closeOnEsc: (e: KeyboardEvent) => void
@@ -261,22 +269,31 @@ export class ErrorOverlay extends HTMLElement {
     document.addEventListener('keydown', this.closeOnEsc)
   }
 
+  // 在错误覆盖层的指定元素中设置文本内容，
+  // 并可选择将文本中的文件路径转换为可点击的链接，以便开发者可以直接在编辑器中打开相关文件。
   text(selector: string, text: string, linkFiles = false): void {
     const el = this.root.querySelector(selector)!
+
+    // 普通文本模式
     if (!linkFiles) {
       el.textContent = text
+
+      // 文件路径链接模式
     } else {
       let curIndex = 0
       let match: RegExpExecArray | null
       fileRE.lastIndex = 0
+      // 遍历文本中的所有文件路径匹配项
       while ((match = fileRE.exec(text))) {
         const { 0: file, index } = match
         const frag = text.slice(curIndex, index)
+        // 添加普通文本片段
         el.appendChild(document.createTextNode(frag))
-        const link = document.createElement('a')
+        const link = document.createElement('a') // 创建链接元素
         link.textContent = file
         link.className = 'file-link'
         link.onclick = () => {
+          // 点击链接时，发送请求打开文件在编辑器中
           fetch(
             new URL(
               `${base}__open-in-editor?file=${encodeURIComponent(file)}`,
@@ -284,6 +301,7 @@ export class ErrorOverlay extends HTMLElement {
             ),
           )
         }
+        // 添加链接元素到目标元素
         el.appendChild(link)
         curIndex += frag.length + file.length
       }
@@ -292,14 +310,20 @@ export class ErrorOverlay extends HTMLElement {
       }
     }
   }
+  // 关闭错误覆盖层并清理相关资源，确保覆盖层从 DOM 中移除且不再响应键盘事件。
   close(): void {
+    // 从 DOM 中移除覆盖层
     this.parentNode?.removeChild(this)
+    // 移除键盘事件监听器
     document.removeEventListener('keydown', this.closeOnEsc)
   }
 }
 
 export const overlayId = 'vite-error-overlay'
+
 const { customElements } = globalThis // Ensure `customElements` is defined before the next line.
+
 if (customElements && !customElements.get(overlayId)) {
+  // 注册自定义元素 `vite-error-overlay`，用于在错误发生时显示错误覆盖层。
   customElements.define(overlayId, ErrorOverlay)
 }

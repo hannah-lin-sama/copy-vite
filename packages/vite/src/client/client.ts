@@ -57,10 +57,15 @@ const wsToken = __WS_TOKEN__ // websocket token
 const isBundleMode = __BUNDLED_DEV__ //是否试验性模式
 const forwardConsole = __SERVER_FORWARD_CONSOLE__
 
-// 创建 WebSocket 连接 → 连接失败自动降级重试 → 报错提示
+/**
+ * 创建 WebSocket 连接 → 连接失败自动降级重试 → 报错提示
+ */
 const transport = normalizeModuleRunnerTransport(
   (() => {
-    // 创建 WebSocket 连接（主连接）
+    /**
+     * 创建 WebSocket 连接（主连接）
+     * return { connect、disconnect、send}
+     */
     let wsTransport = createWebSocketModuleRunnerTransport({
       // 创建 WebSocket 连接
       createConnection: () =>
@@ -140,11 +145,12 @@ if (typeof window !== 'undefined') {
 
 function cleanUrl(pathname: string): string {
   const url = new URL(pathname, 'http://vite.dev')
-  url.searchParams.delete('direct')
+  url.searchParams.delete('direct') // 移除 direct 参数
   return url.pathname + url.search
 }
 
 let isFirstUpdate = true // 是否第一次 HMR 热更新
+
 // 存储：已经过期、需要替换的 CSS <link> 标签
 const outdatedLinkTags = new WeakSet<HTMLLinkElement>()
 
@@ -169,8 +175,8 @@ const hmrClient = new HMRClient(
   },
   transport,
   isBundleMode
-  // 打包开发模式（bundledDev）
-    ? async function importUpdatedModule({
+    ? // 打包开发模式（bundledDev）
+      async function importUpdatedModule({
         url,
         acceptedPath,
         isWithinCircularImport, // 是否在循环依赖里
@@ -193,13 +199,13 @@ const hmrClient = new HMRClient(
         }
         return await importPromise
       }
-      // 普通 ESM 模式
+    : // 普通 ESM 模式
       // 动态加载最新的模块代码 → 解决浏览器缓存 → 处理循环依赖错误
-    : async function importUpdatedModule({
-        acceptedPath,  // 要更新的模块路径
+      async function importUpdatedModule({
+        acceptedPath, // 要更新的模块路径
         timestamp, // 模块更新时间戳
         explicitImportRequired, // 是否显式导入
-        isWithinCircularImport,  // 是否在循环依赖里
+        isWithinCircularImport, // 是否在循环依赖里
       }) {
         // 拆分路径
         const [acceptedPathWithoutQuery, query] = acceptedPath.split(`?`)
@@ -235,7 +241,7 @@ setupForwardConsoleHandler(transport, forwardConsole)
 /**
  * 处理 HMR 消息
  * @param payload HMR 消息 payload
- * @returns 
+ * @returns
  */
 async function handleMessage(payload: HotPayload) {
   switch (payload.type) {
@@ -245,7 +251,7 @@ async function handleMessage(payload: HotPayload) {
       break
     // JS/CSS 热更新
     case 'update':
-       // 通知所有插件 / 监听：马上要热更新了
+      // 通知所有插件 / 监听：马上要热更新了
       // 用于在热更新前执行自定义逻辑，例如刷新页面
       await hmrClient.notifyListeners('vite:beforeUpdate', payload)
       if (hasDocument) {
@@ -289,7 +295,6 @@ async function handleMessage(payload: HotPayload) {
               !outdatedLinkTags.has(e) && cleanUrl(e.href).includes(searchUrl),
           )
 
-          
           if (!el) {
             return
           }
@@ -330,6 +335,7 @@ async function handleMessage(payload: HotPayload) {
     //  处理 custom 自定义消息
     case 'custom': {
       await hmrClient.notifyListeners(payload.event, payload.data)
+
       if (payload.event === 'vite:ws:disconnect') {
         // dom环境，且页面未卸载
         if (hasDocument && !willUnload) {
@@ -338,7 +344,7 @@ async function handleMessage(payload: HotPayload) {
           const url = new URL(socket.url)
           url.search = '' // remove query string including `token`
           await waitForSuccessfulPing(url.href) // 轮询等待服务器重启
-          location.reload()  // 服务器回来后，自动刷新页面
+          location.reload() // 服务器回来后，自动刷新页面
         }
       }
       break
@@ -385,7 +391,7 @@ async function handleMessage(payload: HotPayload) {
       }
       break
     }
-    // 处理 ping 消息
+    // 处理 ping 消息，心跳检测，不处理任何逻辑
     case 'ping': // noop
       break
     // 处理默认情况
@@ -417,13 +423,14 @@ function hasErrorOverlay() {
 }
 
 /**
- * 等待服务器重启成功
+ * 用于等待与开发服务器的成功 ping 连接，确保热模块替换 (HMR) 连接正常建立
  * @param socketUrl 服务器 WebSocket 圞显 URL
- * @returns 
+ * @returns
  */
 function waitForSuccessfulPing(socketUrl: string) {
-  // 确保在 DOM 环境下执行
+  // 1、不支持 SharedWorker 的环境
   if (typeof SharedWorker === 'undefined') {
+    // 文档可见性状态
     const visibilityManager: VisibilityManager = {
       currentState: document.visibilityState,
       listeners: new Set(),
@@ -435,32 +442,48 @@ function waitForSuccessfulPing(socketUrl: string) {
       }
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
+    // 在主线程执行ping操作
     return waitForSuccessfulPingInternal(socketUrl, visibilityManager)
   }
 
+  // 2、支持 SharedWorker 的环境
   // needs to be inlined to
   //   - load the worker after the server is closed
   //   - make it work with backend integrations
+  // 创建 Blob 二进制对象（存放动态 JS 代码）
+  // 把主线程的函数，直接变成共享线程里可以运行的代码。
   const blob = new Blob(
     [
       '"use strict";',
+      // 把主线程的函数转成字符串
       `const waitForSuccessfulPingInternal = ${waitForSuccessfulPingInternal.toString()};`,
       `const fn = ${pingWorkerContentMain.toString()};`,
       `fn(${JSON.stringify(socketUrl)})`,
     ],
-    { type: 'application/javascript' },
+    { type: 'application/javascript' }, // 声明这是JS代码
   )
+
+  // 生成 Blob URL（让 SharedWorker 能加载动态代码）
   const objURL = URL.createObjectURL(blob)
+  // 创建共享工作线程
+  // 启动一个跨标签共享的后台线程
+  // 同源所有标签页共用这一个线程
+  // 里面运行 WebSocket 心跳检测
   const sharedWorker = new SharedWorker(objURL)
+
   return new Promise<void>((resolve, reject) => {
     const onVisibilityChange = () => {
+      // 发送当前窗口可见性状态到共享工作线程
       sharedWorker.port.postMessage({ visibility: document.visibilityState })
     }
+    // 监听窗口可见性变化事件
     document.addEventListener('visibilitychange', onVisibilityChange)
 
+    // 监听共享工作线程消息事件
     sharedWorker.port.addEventListener('message', (event) => {
+      // 移除窗口可见性变化事件监听器
       document.removeEventListener('visibilitychange', onVisibilityChange)
-      sharedWorker.port.close()
+      sharedWorker.port.close() // 关闭共享工作线程端口
 
       const data: { type: 'success' } | { type: 'error'; error: unknown } =
         event.data
@@ -481,11 +504,17 @@ type VisibilityManager = {
   listeners: Set<(newVisibility: DocumentVisibilityState) => void>
 }
 
+/**
+ * 在共享工作线程中处理与主线程的通信，测试与开发服务器的 WebSocket 连接，并将连接结果通知主线程。
+ * @param socketUrl
+ */
 function pingWorkerContentMain(socketUrl: string) {
+  // 监听连接事件，当主线程连接到共享工作线程时触发
   self.addEventListener('connect', (_event) => {
     const event = _event as MessageEvent
-    const port = event.ports[0]
+    const port = event.ports[0] // 获取主线程连接的端口
 
+    // 检查 socketUrl 是否存在，如果不存在则向主线程发送错误消息并返回
     if (!socketUrl) {
       port.postMessage({
         type: 'error',
@@ -494,21 +523,28 @@ function pingWorkerContentMain(socketUrl: string) {
       return
     }
 
+    // 创建一个 visibilityManager 对象，用于管理窗口可见性状态
     const visibilityManager: VisibilityManager = {
       currentState: 'visible',
       listeners: new Set(),
     }
+
+    // 监听主线程消息事件，当主线程发送窗口可见性状态时触发
     port.addEventListener('message', (event) => {
       const { visibility } = event.data
       visibilityManager.currentState = visibility
       console.debug('[vite] new window visibility', visibility)
+
+      // 通知所有注册的监听器，窗口可见性状态已改变
       for (const listener of visibilityManager.listeners) {
         listener(visibility)
       }
     })
-    port.start()
+    port.start() // 开始接收消息
 
     console.debug('[vite] connected from window')
+
+    // 尝试与服务器建立 WebSocket 连接
     waitForSuccessfulPingInternal(socketUrl, visibilityManager).then(
       () => {
         console.debug('[vite] ping successful')
@@ -531,11 +567,11 @@ function pingWorkerContentMain(socketUrl: string) {
 }
 
 /**
- * 等待服务器重启成功
- * @param socketUrl 服务器 WebSocket 圞显 URL
+ * 持续尝试与开发服务器建立 WebSocket 连接，直到成功为止，同时根据窗口的可见性状态调整尝试策略。
+ * @param socketUrl 服务器 WebSocket  URL
  * @param visibilityManager 可见性管理器
  * @param ms 等待时间（毫秒）
- * @returns 
+ * @returns
  */
 async function waitForSuccessfulPingInternal(
   socketUrl: string,
@@ -546,8 +582,10 @@ async function waitForSuccessfulPingInternal(
     return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
+  // 尝试与开发服务器建立 WebSocket 连接，测试服务器是否可用，并返回连接是否成功的布尔值。
   async function ping() {
     try {
+      // 创建 WebSocket 连接
       const socket = new WebSocket(socketUrl, 'vite-ping')
       return new Promise<boolean>((resolve) => {
         function onOpen() {
@@ -574,6 +612,7 @@ async function waitForSuccessfulPingInternal(
     }
   }
 
+  // 创建一个 Promise，当窗口变为可见状态时解析，用于在窗口不可见时暂停操作，等待窗口重新变为可见。
   function waitForWindowShow(visibilityManager: VisibilityManager) {
     return new Promise<void>((resolve) => {
       const onChange = (newVisibility: DocumentVisibilityState) => {
@@ -586,19 +625,23 @@ async function waitForSuccessfulPingInternal(
     })
   }
 
+  // 如果成功，直接返回
   if (await ping()) {
     return
   }
+  // 如果失败，等待 ms 毫秒
   await wait(ms)
 
+  // 进入无限循环，直到连接成功
   while (true) {
     // 如果窗口可见，尝试连接
     if (visibilityManager.currentState === 'visible') {
       if (await ping()) {
-        break
+        break // 如果成功，跳出循环
       }
-      await wait(ms)
+      await wait(ms) // 如果失败，等待 ms 毫秒后再次尝试
     } else {
+      // 如果窗口不可见，等待窗口变为可见后再尝试
       await waitForWindowShow(visibilityManager)
     }
   }
@@ -690,14 +733,18 @@ export function createHotContext(ownerPath: string): ViteHotContext {
 
 /**
  * urls here are dynamic import() urls that couldn't be statically analyzed
+ * 向指定的 URL 中注入查询参数，同时保留原有的查询参数和哈希部分。
  */
 export function injectQuery(url: string, queryToInject: string): string {
   // skip urls that won't be handled by vite
+  // 检查 URL 是否以 . 或 / 开头
+  // 跳过外部资源或完整 URL，避免不必要的处理
   if (url[0] !== '.' && url[0] !== '/') {
     return url
   }
 
   // can't use pathname from URL since it may be relative like ../
+  // 使用正则表达式移除 URL 中的查询参数和哈希部分，提取纯路径
   const pathname = url.replace(/[?#].*$/, '')
   const { search, hash } = new URL(url, 'http://vite.dev')
 
@@ -713,7 +760,7 @@ declare const DevRuntime: typeof DevRuntimeType
 if (isBundleMode && typeof DevRuntime !== 'undefined') {
   // 继承 Rolldown 开发时运行时，扩展 HMR 热更新能力
   class ViteDevRuntime extends DevRuntime {
-     // 创建模块热更新上下文
+    // 创建模块热更新上下文
     override createModuleHotContext(moduleId: string) {
       const ctx = createHotContext(moduleId)
       // @ts-expect-error TODO: support CSS properly
