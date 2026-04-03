@@ -20,6 +20,12 @@ export interface ResolvedForwardConsoleOptions {
   logLevels: ForwardConsoleLogLevel[]
 }
 
+/**
+ * 设置控制台转发处理器，将浏览器控制台的日志和未处理的错误转发到指定的传输对象，实现远程日志和错误监控。
+ * @param transport
+ * @param options
+ * @returns
+ */
 export function setupForwardConsoleHandler(
   transport: NormalizedModuleRunnerTransport,
   options: ResolvedForwardConsoleOptions,
@@ -28,6 +34,7 @@ export function setupForwardConsoleHandler(
     return
   }
 
+  // 定义错误发送函数
   function sendError(type: 'error' | 'unhandled-rejection', error: any) {
     transport.send({
       type: 'custom',
@@ -43,6 +50,7 @@ export function setupForwardConsoleHandler(
     })
   }
 
+  // 定义日志发送函数
   function sendLog(level: ForwardConsoleLogLevel, args: unknown[]) {
     transport.send({
       type: 'custom',
@@ -57,11 +65,15 @@ export function setupForwardConsoleHandler(
     })
   }
 
+  // 遍历 options.logLevels 中指定的日志级别
   for (const level of options.logLevels) {
+    // 原始 console 方法
     const original = (console as any)[level]
     if (typeof original !== 'function') {
       continue
     }
+    // 重写 console 方法
+    // 保留了控制台的原始行为，又实现了日志的转发
     ;(console as any)[level] = (...args: unknown[]) => {
       original(...args)
       sendLog(level, args)
@@ -69,6 +81,7 @@ export function setupForwardConsoleHandler(
   }
 
   if (options.unhandledErrors && typeof window !== 'undefined') {
+    // 捕获全局错误
     window.addEventListener('error', (event) => {
       // `ErrorEvent` doesn't necessarily have `ErrorEvent.error`.
       // Use `ErrorEvent.message` as fallback e.g. for ResizeObserver error.
@@ -79,6 +92,7 @@ export function setupForwardConsoleHandler(
       sendError('error', error)
     })
 
+    // 捕获未处理的 Promise 拒绝
     window.addEventListener('unhandledrejection', (event) => {
       sendError('unhandled-rejection', event.reason)
     })

@@ -775,7 +775,10 @@ const configDefaults = Object.freeze({
   resolve: {
     // mainFields
     // conditions
+
+    // 默认值 ['node', 'module-sync']
     externalConditions: [...DEFAULT_EXTERNAL_CONDITIONS],
+    // 默认值 ['.mjs','.js','.mts','.ts','.jsx','.tsx','.json',]
     extensions: DEFAULT_EXTENSIONS,
     dedupe: [],
     /** @experimental */
@@ -976,19 +979,27 @@ function resolveEnvironmentOptions(
   }
 }
 
+/**
+ * 获取默认环境选项
+ * @param config 用户配置
+ * @returns 默认环境选项
+ */
 export function getDefaultEnvironmentOptions(
   config: UserConfig,
 ): EnvironmentOptions {
   return {
+    // define 是全局常量替换，通常所有环境共享相同的定义
     define: config.define,
     resolve: {
+      // 从顶层 resolve 中拷贝所有字段
       ...config.resolve,
       // mainFields and conditions are not inherited
+      // 忽略顶层的 mainFields 和 conditions 字段
       mainFields: undefined,
       conditions: undefined,
     },
-    dev: config.dev,
-    build: config.build,
+    dev: config.dev, // 从顶层 dev 中拷贝所有字段
+    build: config.build, // 从顶层 build 中拷贝所有字段
   }
 }
 
@@ -1043,13 +1054,18 @@ function checkBadCharactersInPath(
   }
 }
 
+// 于开发服务器的别名解析规则，
+// 主要目的是将浏览器中请求的虚拟模块（如 /@vite/env 和 /@vite/client）映射到实际的磁盘文件入口。
 const clientAlias = [
   {
     find: /^\/?@vite\/env/,
+    // FS_PREFIX（通常是 '/@fs/'）是 Vite 内部用于存储虚拟模块的前缀
+    // dist/client/env.mjs
     replacement: path.posix.join(FS_PREFIX, normalizePath(ENV_ENTRY)),
   },
   {
     find: /^\/?@vite\/client/,
+    // dist/client/client.mjs
     replacement: path.posix.join(FS_PREFIX, normalizePath(CLIENT_ENTRY)),
   },
 ]
@@ -1057,6 +1073,16 @@ const clientAlias = [
 /**
  * alias and preserveSymlinks are not per-environment options, but they are
  * included in the resolved environment options for convenience.
+ */
+/**
+ *
+ * @param resolve
+ * @param alias
+ * @param preserveSymlinks
+ * @param logger
+ * @param consumer
+ * @param isSsrTargetWebworkerEnvironment
+ * @returns
  */
 function resolveEnvironmentResolveOptions(
   resolve: EnvironmentResolveOptions | undefined,
@@ -1068,27 +1094,38 @@ function resolveEnvironmentResolveOptions(
   // Backward compatibility
   isSsrTargetWebworkerEnvironment?: boolean,
 ): ResolvedAllResolveOptions {
+  // 合并用户配置的 resolve 选项与默认 resolve 选项
   const resolvedResolve: ResolvedAllResolveOptions = mergeWithDefaults(
     {
+      // 从顶层 resolve 中拷贝所有字段
       ...configDefaults.resolve,
+
+      // 尝试解析字段
+      // 注意：这比从 exports 字段解析的条件导出优先级低：如果一个入口起点从 exports 成功解析，resolve.mainFields 将被忽略。
       mainFields:
         consumer === undefined ||
         consumer === 'client' ||
         isSsrTargetWebworkerEnvironment
-          ? DEFAULT_CLIENT_MAIN_FIELDS
-          : DEFAULT_SERVER_MAIN_FIELDS,
+          ? // 默认值 ['browser', 'module', 'jsnext:main', 'jsnext']
+            DEFAULT_CLIENT_MAIN_FIELDS
+          : // 默认值 ['module', 'jsnext:main', 'jsnext']
+            DEFAULT_SERVER_MAIN_FIELDS,
+
       conditions:
         consumer === undefined ||
         consumer === 'client' ||
         isSsrTargetWebworkerEnvironment
-          ? DEFAULT_CLIENT_CONDITIONS
-          : DEFAULT_SERVER_CONDITIONS.filter((c) => c !== 'browser'),
+          ? // 默认值 ['module', 'browser', 'development|production']
+            DEFAULT_CLIENT_CONDITIONS
+          : // 默认值 ['module', 'node', 'development|production']
+            DEFAULT_SERVER_CONDITIONS.filter((c) => c !== 'browser'),
+
       builtins:
         resolve?.builtins ??
         (consumer === 'server'
           ? isSsrTargetWebworkerEnvironment && resolve?.noExternal === true
             ? []
-            : nodeLikeBuiltins
+            : nodeLikeBuiltins // 是否非node 内置模块
           : []),
     },
     resolve ?? {},
@@ -1097,10 +1134,15 @@ function resolveEnvironmentResolveOptions(
   resolvedResolve.alias = alias
 
   if (
+    // 检查用户配置中是否显式设置了 browserField: false
+    // 该字段已不存在，因此 TypeScript 会报错，用 @ts-expect-error 忽略
     // @ts-expect-error removed field
     resolve?.browserField === false &&
+    // 检查当前解析后的 mainFields 是否仍然包含 'browser' 字段
     resolvedResolve.mainFields.includes('browser')
   ) {
+    // 如果用户原先想禁用浏览器字段（browserField: false），
+    // 但当前 mainFields 中仍有 'browser'，则说明配置不一致，需要更新。
     logger.warn(
       colors.yellow(
         `\`resolve.browserField\` is set to false, but the option is removed in favour of ` +
@@ -1112,18 +1154,33 @@ function resolveEnvironmentResolveOptions(
   return resolvedResolve
 }
 
+/**
+ * 解析 resolve 选项
+ * @param resolve 用户配置的 resolve 选项
+ * @param logger 日志记录器
+ * @returns 解析后的 resolve 选项
+ */
 function resolveResolveOptions(
   resolve: AllResolveOptions | undefined,
   logger: Logger,
 ): ResolvedAllResolveOptions {
   // resolve alias with internal client alias
+  // 合并用户配置的 alias 与默认 alias
   const alias = normalizeAlias(
     mergeAlias(clientAlias, resolve?.alias || configDefaults.resolve.alias),
   )
+  // 合并用户配置的 preserveSymlinks 与默认 preserveSymlinks
   const preserveSymlinks =
     resolve?.preserveSymlinks ?? configDefaults.resolve.preserveSymlinks
 
+  // 警告用户移除 alias 中的根目录映射
   if (alias.some((a) => a.find === '/')) {
+    // 为什么需要警告？
+    // 1、干扰绝对路径解析
+    // 2、影响内置模块和第三方库
+    // 3、与 Vite 内部处理冲突
+
+    // 建议：使用更具体的别名：例如 '/@' 映射到 src 目录，而不是直接用 '/'。
     logger.warn(
       colors.yellow(
         `\`resolve.alias\` contains an alias that maps \`/\`. ` +
@@ -1131,7 +1188,16 @@ function resolveResolveOptions(
       ),
     )
   }
+  // 警告用户移除 alias 中的 customResolver 选项，因为已被废弃
   if (alias.some((a) => a.customResolver)) {
+    // 为什么弃用 customResolver？
+    // 1、功能重叠：customResolver 的功能完全可以通过 Vite 插件（或 Rollup 插件）的 resolveId 钩子实现，且插件系统更加标准化、可组合。
+    // 2、复杂性：在别名配置中嵌入解析逻辑增加了配置的复杂度，且难以调试和维护。
+    // 3、性能与缓存：插件系统能够更好地与 Vite 的模块图缓存集成，而 customResolver 可能绕过一些内部优化。
+    // 4、统一 API：Vite 致力于简化配置，将高级定制能力收敛到插件 API，使核心配置更清晰。
+
+    // 建议：
+    // 创建插件：实现 resolveId 钩子，并设置 enforce: 'pre' 确保它在 Vite 内置解析器之前执行
     logger.warn(
       colors.yellow(
         `\`resolve.alias\` contains an alias with \`customResolver\` option. ` +
@@ -1344,6 +1410,11 @@ function applyDepOptimizationOptionCompat(resolvedConfig: ResolvedConfig) {
   }
 }
 
+/**
+ * 检查配置对象是否为已解析配置对象
+ * @param inlineConfig 配置对象
+ * @returns 是否为已解析配置对象
+ */
 export function isResolvedConfig(
   inlineConfig: InlineConfig | ResolvedConfig,
 ): inlineConfig is ResolvedConfig {
@@ -1355,7 +1426,7 @@ export function isResolvedConfig(
 
 /**
  * 解析配置对象
- * 
+ *
  * @param inlineConfig 内联配置对象
  * @param command 命令类型
  * @param defaultMode 默认模式
@@ -1364,7 +1435,7 @@ export function isResolvedConfig(
  * @param patchConfig 配置对象修补函数
  * @param patchPlugins 插件修补函数
  * @param plugins 插件数组
- * @returns 
+ * @returns
  */
 export async function resolveConfig(
   inlineConfig: InlineConfig,
@@ -1378,32 +1449,38 @@ export async function resolveConfig(
   patchPlugins: ((resolvedPlugins: Plugin[]) => void) | undefined = undefined,
 ): Promise<ResolvedConfig> {
   let config = inlineConfig
-  // 初始化 build 配置对象
-  config.build ??= {}
+  config.build ??= {} // 保证配置一定存在，防止后续读取属性时报错
+  // 兼容 build.rollupOptions 等废弃写法
   setupRollupOptionCompat(config.build, 'build')
-  // 初始化 worker 配置
+
   config.worker ??= {}
-  setupRollupOptionCompat(config.worker, 'worker')
-  // 初始化 optimizeDeps 配置
+  setupRollupOptionCompat(config.worker, 'worker') // 处理 Web Worker 编译配置
+
   config.optimizeDeps ??= {}
-  setupRollupOptionCompat(config.optimizeDeps, 'optimizeDeps')
-  // 初始化 ssr 配置
+  setupRollupOptionCompat(config.optimizeDeps, 'optimizeDeps') // 处理依赖优化配置
+
   if (config.ssr) {
     config.ssr.optimizeDeps ??= {}
+    // 处理 SSR 环境的依赖预构建
     setupRollupOptionCompat(config.ssr.optimizeDeps, 'ssr.optimizeDeps')
   }
 
   let configFileDependencies: string[] = []
+  // 初始化模式
   let mode = inlineConfig.mode || defaultMode
+  // 检查是否设置了 NODE_ENV 环境变量
   const isNodeEnvSet = !!process.env.NODE_ENV
+  // 初始化包缓存
   const packageCache: PackageCache = new Map()
 
   // some dependencies e.g. @vue/compiler-* relies on NODE_ENV for getting
   // production-specific behavior, so set it early on
+  // 如果未设置 NODE_ENV 环境变量，则设置为默认值
   if (!isNodeEnvSet) {
     process.env.NODE_ENV = defaultNodeEnv
   }
 
+  // 初始化配置环境对象
   const configEnv: ConfigEnv = {
     mode,
     command,
@@ -1413,6 +1490,7 @@ export async function resolveConfig(
 
   let { configFile } = config
   if (configFile !== false) {
+    // 从文件加载配置
     const loadResult = await loadConfigFromFile(
       configEnv,
       configFile,
@@ -1429,6 +1507,7 @@ export async function resolveConfig(
   }
 
   // user config may provide an alternative mode. But --mode has a higher priority
+  // 内联配置模式 > 配置文件模式 > 默认模式
   mode = inlineConfig.mode || config.mode || mode
   configEnv.mode = mode
 
@@ -1463,6 +1542,7 @@ export async function resolveConfig(
   // If there are present, ensure order { client, ssr, ...custom }
   // 初始化环境对象
   config.environments ??= {}
+  // 没有ssr环境，且不是构建命令，且没有配置ssr环境，且没有配置ssr环境的依赖
   if (
     !config.environments.ssr &&
     (!isBuild || config.ssr || config.build?.ssr)
@@ -1492,20 +1572,26 @@ export async function resolveConfig(
 
   checkBadCharactersInPath('The project root', resolvedRoot, logger)
 
+  // 初始化客户端环境
   const configEnvironmentsClient = config.environments!.client!
   configEnvironmentsClient.dev ??= {}
 
   const deprecatedSsrOptimizeDepsConfig = config.ssr?.optimizeDeps ?? {}
+
+  // 初始化SSR环境
   let configEnvironmentsSsr = config.environments!.ssr
 
   // Backward compatibility: server.warmup.clientFiles/ssrFiles -> environment.dev.warmup
+  // 处理预热选项
   const warmupOptions = config.server?.warmup
   if (warmupOptions?.clientFiles) {
+    // 处理客户端预热选项
     configEnvironmentsClient.dev.warmup = warmupOptions.clientFiles
   }
   if (warmupOptions?.ssrFiles) {
     configEnvironmentsSsr ??= {}
     configEnvironmentsSsr.dev ??= {}
+    // 处理SSR预热选项
     configEnvironmentsSsr.dev.warmup = warmupOptions.ssrFiles
   }
 
@@ -1513,6 +1599,7 @@ export async function resolveConfig(
   if (configEnvironmentsSsr) {
     configEnvironmentsSsr.optimizeDeps = mergeConfig(
       deprecatedSsrOptimizeDepsConfig,
+
       configEnvironmentsSsr.optimizeDeps ?? {},
     )
 
@@ -1533,6 +1620,7 @@ export async function resolveConfig(
     ).resolve
   }
 
+  // 处理SSR环境的资产输出选项
   if (config.build?.ssrEmitAssets !== undefined) {
     configEnvironmentsSsr ??= {}
     configEnvironmentsSsr.build ??= {}
@@ -1548,6 +1636,7 @@ export async function resolveConfig(
 
   // Merge default environment config values
   const defaultEnvironmentOptions = getDefaultEnvironmentOptions(config)
+
   // Some top level options only apply to the client environment
   const defaultClientEnvironmentOptions: UserConfig = {
     ...defaultEnvironmentOptions,
@@ -1584,6 +1673,7 @@ export async function resolveConfig(
     config.ssr?.target === 'webworker',
   )
 
+  // 是否开启捆绑开发模式
   const isBundledDev = command === 'serve' && !!config.experimental?.bundledDev
 
   // Backward compatibility: merge config.environments.client.resolve back into config.resolve
@@ -1631,24 +1721,33 @@ export async function resolveConfig(
 
   // Backward compatibility: merge config.environments.ssr back into config.ssr
   // so ecosystem SSR plugins continue to work if only environments.ssr is configured
+  // SSR（服务端渲染）环境配置
   const patchedConfigSsr = {
-    ...config.ssr,
+    ...config.ssr, // 继承所有选项
+    // 覆盖 external，指定哪些模块不应被打包
     external: resolvedEnvironments.ssr?.resolve.external,
+    // 覆盖 noExternal，强制将某些模块打包
     noExternal: resolvedEnvironments.ssr?.resolve.noExternal,
+    // 覆盖 optimizeDeps
     optimizeDeps: resolvedEnvironments.ssr?.optimizeDeps,
     resolve: {
+      // 继承全局 resolve 选项
       ...config.ssr?.resolve,
+      // 覆盖 conditions，指定模块解析时的导出条件
       conditions: resolvedEnvironments.ssr?.resolve.conditions,
+      // 覆盖 externalConditions，用于判断一个模块是否应当被 external 化时的额外条件
       externalConditions: resolvedEnvironments.ssr?.resolve.externalConditions,
     },
   }
   const ssr = resolveSSROptions(
     patchedConfigSsr,
+    // 表示模块解析时是否保留符号链接的原始路径
     resolvedDefaultResolve.preserveSymlinks,
   )
 
   // load .env files
   // Backward compatibility: set envDir to false when envFile is false
+  // envDir 用于加载 .env 文件的目录
   let envDir = config.envFile === false ? false : config.envDir
   if (envDir !== false) {
     envDir = config.envDir
@@ -1661,12 +1760,24 @@ export async function resolveConfig(
   // Note it is possible for user to have a custom mode, e.g. `staging` where
   // development-like behavior is expected. This is indicated by NODE_ENV=development
   // loaded from `.staging.env` and set by us as VITE_USER_NODE_ENV
+  // 防止用户在 .env 文件中随意设置 NODE_ENV 导致开发模式异常
+
+  // 一个特殊变量 VITE_USER_NODE_ENV（注意不是 NODE_ENV）。
+  // 用户如果想影响 process.env.NODE_ENV，需要通过这个自定义变量间接设置
   const userNodeEnv = process.env.VITE_USER_NODE_ENV
+
+  // !isNodeEnvSet：检查 process.env.NODE_ENV 是否尚未被设置
+
+  // 用户定义了 VITE_USER_NODE_ENV 且当前 NODE_ENV 未设置
   if (!isNodeEnvSet && userNodeEnv) {
     if (userNodeEnv === 'development') {
+      // 若值为 'development'，则将 process.env.NODE_ENV 设置为 'development'
       process.env.NODE_ENV = 'development'
     } else {
       // NODE_ENV=production is not supported as it could break HMR in dev for frameworks like Vue
+      // 输出警告，不修改 NODE_ENV
+      // 为什么限制？
+      // 许多库（包括 Vue、React）会根据 NODE_ENV 决定是否启用开发工具、详细警告、热更新（HMR）等
       logger.warn(
         `NODE_ENV=${userNodeEnv} is not supported in the .env file. ` +
           `Only NODE_ENV=development is supported to create a development build of your project. ` +
@@ -1675,9 +1786,12 @@ export async function resolveConfig(
     }
   }
 
+  // 是否为生产环境
   const isProduction = process.env.NODE_ENV === 'production'
 
   // resolve public base url
+  // 判断是否相对路径简写
+  // 空字符串 ''（Vite 3+ 中默认值）或 './'（显式相对路径）
   const relativeBaseShortcut = config.base === '' || config.base === './'
 
   // During dev, we ignore relative base and fallback to '/'
@@ -1685,8 +1799,11 @@ export async function resolveConfig(
   // of import.meta.url.
   const resolvedBase = relativeBaseShortcut
     ? !isBuild || config.build?.ssr
-      ? '/'
-      : './'
+      ? // 原因：开发服务器必须使用绝对路径（/），因为无法预先知道客户端访问的最终 URL；
+        //  SSR 构建时，import.meta.url 无法可靠处理相对路径，故也回退到根路径。
+        '/' // 开发模式或 SSR 构建，返回 /
+      : // 允许使用相对路径，这样构建后的资源引用可以相对于当前 HTML 文件，便于部署到任意子目录
+        './' // 生产模式且非 SSR 构建，返回 './'
     : resolveBaseUrl(config.base, isBuild, logger)
 
   // resolve cache directory
@@ -1824,13 +1941,20 @@ export async function resolveConfig(
   > & {
     rolldownOptions: ResolvedWorkerOptions['rolldownOptions'] | undefined
   } = {
+    // 从用户配置中读取 worker.format，如果未配置则默认使用 'iife'
+    // 在 Vite 早期版本中，Worker 默认以 IIFE 格式输出，以确保兼容性（因为当时部分浏览器对 ES 模块 Worker 支持不完善）
+    // 虽然现代浏览器已广泛支持 ES 模块 Worker，但为了保持向后兼容，默认值仍为 'iife'。
     format: config.worker?.format || 'iife',
     plugins: createWorkerPlugins,
+    // 从用户配置中读取 worker.rollupOptions，若未提供则默认为空对象
     rollupOptions: config.worker?.rollupOptions || {},
+    // 直接取用户配置中的 worker.rolldownOptions，若未提供则默认为 undefined
     rolldownOptions: config.worker?.rolldownOptions, // will be set by setupRollupOptionCompat if undefined
   }
+  // 配置 Rollup 选项兼容性
   setupRollupOptionCompat(resolvedWorkerOptions, 'worker')
 
+  // 基础路径，确保以斜杠结尾
   const base = withTrailingSlash(resolvedBase)
 
   const preview = resolvePreviewOptions(config.preview, server)
@@ -1873,6 +1997,8 @@ export async function resolveConfig(
     configDefaults.experimental,
     config.experimental ?? {},
   )
+
+  // 开发环境，且启用了捆绑开发模式
   if (command === 'serve' && experimental.bundledDev) {
     // full bundle mode does not support experimental.renderBuiltUrl
     experimental.renderBuiltUrl = undefined
@@ -1885,29 +2011,45 @@ export async function resolveConfig(
   )
 
   resolved = {
+    // 配置文件路径，绝对路径
     configFile: configFile ? normalizePath(configFile) : undefined,
+    // 依赖的模块路径，绝对路径
     configFileDependencies: configFileDependencies.map((name) =>
       normalizePath(path.resolve(name)),
     ),
+    // 内联配置
     inlineConfig,
+    // 项目根目录
     root: resolvedRoot,
     base,
+    // 解码后的基础路径
     decodedBase: decodeBase(base),
+    // 原始基础路径
     rawBase: resolvedBase,
+    // 公共目录 绝度路径
     publicDir: resolvedPublicDir,
+    // 缓存目录 绝度路径 /xxx/xxx/.vite
     cacheDir,
+    // 命令 build 或 serve
     command,
     mode,
-    // 
+    // 是否为捆绑模式
     isBundled: config.experimental?.bundledDev || isBuild,
     isWorker: false,
+    // 主配置
     mainConfig: null,
+    // 模块依赖链
     bundleChain: [],
+    // 是否为生产环境
     isProduction,
+    // 插件配置
     plugins: userPlugins, // placeholder to be replaced
+    // CSS 配置
     css: resolveCSSOptions(config.css),
+    // JSON 配置
     json: mergeWithDefaults(configDefaults.json, config.json ?? {}),
     // preserve esbuild for buildEsbuildPlugin
+    // esbuild 配置
     esbuild:
       config.esbuild === false
         ? false
@@ -1918,6 +2060,7 @@ export async function resolveConfig(
             legalComments: 'none',
             ...config.esbuild,
           },
+    // Oxc 配置
     oxc:
       oxc === false
         ? false
@@ -1931,56 +2074,89 @@ export async function resolveConfig(
                     ...oxc?.jsx,
                   },
           },
+    // 服务器配置
     server,
+    // 构建器配置
     builder,
+    // 预览配置
     preview,
+    // 环境变量目录
     envDir,
+    // 环境变量配置
     env: {
       ...userEnv,
-      BASE_URL,
-      MODE: mode,
-      DEV: !isProduction,
-      PROD: isProduction,
+      BASE_URL, // 基础路径
+      MODE: mode, // 项目模式，development 或 production
+      DEV: !isProduction, // 是否为开发环境
+      PROD: isProduction, // 是否为生产环境
     },
+    // 资产包含配置
     assetsInclude(file: string) {
       return DEFAULT_ASSETS_RE.test(file) || assetsFilter(file)
     },
+    // 原始资产包含配置
     rawAssetsInclude: config.assetsInclude ? arraify(config.assetsInclude) : [],
+    // 日志配置
     logger,
+    // 包缓存配置
     packageCache,
+    // 工作线程配置
     worker: resolvedWorkerOptions,
+    // 应用类型，默认为 SPA
     appType: config.appType ?? 'spa',
     experimental,
+    // 配置未来选项
     future:
       config.future === 'warn'
         ? ({
+            // 警告用户移除handleHotUpdate插件钩子，因为已被废弃
             removePluginHookHandleHotUpdate: 'warn',
+            // 警告用户移除ssrArgument插件钩子，因为已被废弃
             removePluginHookSsrArgument: 'warn',
+            // 警告用户移除moduleGraph服务器配置，因为已被废弃
             removeServerModuleGraph: 'warn',
+            // 警告用户移除reloadModule服务器配置，因为已被废弃
             removeServerReloadModule: 'warn',
+            // 警告用户移除pluginContainer服务器配置，因为已被废弃
             removeServerPluginContainer: 'warn',
+            // 警告用户移除hot服务器配置，因为已被废弃
             removeServerHot: 'warn',
+            // 警告用户移除transformRequest服务器配置，因为已被废弃
             removeServerTransformRequest: 'warn',
+            // 警告用户移除warmupRequest服务器配置，因为已被废弃
             removeServerWarmupRequest: 'warn',
+            // 警告用户移除ssrLoadModule服务器配置，因为已被废弃
             removeSsrLoadModule: 'warn',
           } satisfies Required<FutureOptions>)
         : config.future,
 
+    // 是否开启 SSR
     ssr,
 
+    // 优化依赖项配置
     optimizeDeps: backwardCompatibleOptimizeDeps,
+    // 模块解析配置
     resolve: resolvedDefaultResolve,
+    // 开发环境配置
     dev: resolvedDevEnvironmentOptions,
+    // 构建环境配置
     build: resolvedBuildOptions,
+    // 开发环境的 DevTools 配置
     devtools: resolvedDevToolsConfig,
 
+    // 环境配置
     environments: resolvedEnvironments,
 
     // random 72 bits (12 base64 chars)
     // at least 64bits is recommended
     // https://owasp.org/www-community/vulnerabilities/Insufficient_Session-ID_Length
+    // 生成一个安全的、随机字符串（Base64URL 格式）
+    // Buffer.from 将 Uint8Array（类数组）转换为 Node.js 的 Buffer 对象
     webSocketToken: Buffer.from(
+      // new Uint8Array(9) 创建一个包含 9 个字节的 TypedArray，每个字节初始为 0。
+      // crypto.getRandomValues，会用随机值填充这 9 个字节（每个字节 0-255）
       crypto.getRandomValues(new Uint8Array(9)),
+      // 将 Buffer 编码为 Base64URL 格式
     ).toString('base64url'),
 
     getSortedPlugins: undefined!,
@@ -2015,8 +2191,10 @@ export async function resolveConfig(
         dot: true,
       },
     ),
+
+    // 安全模块路径集合，用于限制模块的加载路径
     safeModulePaths: new Set<string>(),
-    [SYMBOL_RESOLVED_CONFIG]: true,
+    [SYMBOL_RESOLVED_CONFIG]: true, // 标记为已解析配置对象
   }
   resolved = {
     ...config,
@@ -2220,6 +2398,18 @@ export function sortUserPlugins(
   return [prePlugins, normalPlugins, postPlugins]
 }
 
+/**
+ * 从文件加载 Vite 配置
+ * @param configEnv 配置环境
+ * @param configFile 配置文件路径
+ * @param configRoot 配置根目录
+ * @param logLevel 日志级别
+ * @param customLogger 配置加载器
+ * @param logLevel 日志级别
+ * @param customLogger 配置加载器
+ * @param configLoader 配置加载器类型
+ * @returns
+ */
 export async function loadConfigFromFile(
   configEnv: ConfigEnv,
   configFile?: string,
@@ -2253,6 +2443,7 @@ export async function loadConfigFromFile(
   } else {
     // implicit config file loaded from inline root (if present)
     // otherwise from cwd
+    // 遍历查找默认配置文件
     for (const filename of DEFAULT_CONFIG_FILES) {
       const filePath = path.resolve(configRoot, filename)
       if (!fs.existsSync(filePath)) continue
@@ -2270,10 +2461,11 @@ export async function loadConfigFromFile(
   try {
     const resolver =
       configLoader === 'bundle'
-        ? bundleAndLoadConfigFile
+        ? bundleAndLoadConfigFile // 处理配置文件的预构建
         : configLoader === 'runner'
-          ? runnerImportConfigFile
-          : nativeImportConfigFile
+          ? runnerImportConfigFile // 处理配置文件的运行时导入
+          : nativeImportConfigFile // 处理配置文件的原生导入
+
     const { configExport, dependencies } = await resolver(resolvedPath)
     debug?.(`config file loaded in ${getTime()}`)
 
@@ -2319,10 +2511,16 @@ async function runnerImportConfigFile(resolvedPath: string) {
   }
 }
 
+/**
+ * 构建配置文件
+ * @param resolvedPath 配置文件路径
+ * @returns
+ */
 async function bundleAndLoadConfigFile(resolvedPath: string) {
   const isESM =
     typeof process.versions.deno === 'string' || isFilePathESM(resolvedPath)
 
+  //
   const bundled = await bundleConfigFile(resolvedPath, isESM)
   const userConfig = await loadConfigFromBundledFile(
     resolvedPath,
@@ -2336,6 +2534,12 @@ async function bundleAndLoadConfigFile(resolvedPath: string) {
   }
 }
 
+/**
+ * 构建配置文件
+ * @param fileName 配置文件路径
+ * @param isESM 是否为 ESM 文件
+ * @returns
+ */
 async function bundleConfigFile(
   fileName: string,
   isESM: boolean,
@@ -2350,6 +2554,7 @@ async function bundleConfigFile(
     '__vite_injected_original_import_meta_resolve'
   const importMetaResolveRegex = /import\.meta\s*\.\s*resolve/
 
+  //
   const bundle = await rolldown({
     input: fileName,
     // target: [`node${process.versions.node}`],
@@ -2603,7 +2808,7 @@ async function loadConfigFromBundledFile(
  * @param config 配置对象
  * @param plugins 插件数组
  * @param configEnv 配置环境对象
- * @returns 
+ * @returns
  */
 async function runConfigHook(
   config: InlineConfig,

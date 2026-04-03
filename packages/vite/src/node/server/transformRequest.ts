@@ -74,11 +74,19 @@ export interface TransformOptionsInternal {
 // separate file to preserve the history or keep the DevEnvironment class cleaner,
 // but conceptually this is: `environment.transformRequest(url, options)`
 
+/**
+ * 转换指定 URL 的请求
+ * @param environment
+ * @param url
+ * @param options
+ * @returns
+ */
 export function transformRequest(
   environment: DevEnvironment,
   url: string,
   options: TransformOptionsInternal = {},
 ): Promise<TransformResult | null> {
+  // 检查环境是否已关闭且可恢复
   if (environment._closing && environment.config.dev.recoverable)
     throwClosedServerError()
 
@@ -107,7 +115,9 @@ export function transformRequest(
   url = removeTimestampQuery(url)
 
   const pending = environment._pendingRequests.get(url)
+
   if (pending) {
+    // 获取模块
     return environment.moduleGraph.getModuleByUrl(url).then((module) => {
       if (!module || pending.timestamp > module.lastInvalidationTimestamp) {
         // The pending request is still valid, we can safely reuse its result
@@ -119,12 +129,14 @@ export function transformRequest(
 
         // First request has been invalidated, abort it to clear the cache,
         // then perform a new doTransform.
+        // 终止
         pending.abort()
         return transformRequest(environment, url, options)
       }
     })
   }
 
+  // 执行转换
   const request = doTransform(environment, url, options, timestamp)
 
   // Avoid clearing the cache of future requests if aborted
@@ -146,17 +158,28 @@ export function transformRequest(
   return request.finally(clearCache)
 }
 
+/**
+ * 执行模块的转换处理，包括缓存检查、模块解析、转换执行和请求注册，确保模块能够被正确转换并缓存结果以提高性能
+ * @param environment
+ * @param url
+ * @param options
+ * @param timestamp
+ * @returns
+ */
 async function doTransform(
   environment: DevEnvironment,
   url: string,
   options: TransformOptionsInternal,
   timestamp: number,
 ) {
+  // 获取插件容器
   const { pluginContainer } = environment
 
+  // 通过 URL 从模块图中获取模块
   let module = await environment.moduleGraph.getModuleByUrl(url)
   if (module) {
     // try use cache from url
+    // 尝试从缓存获取转换结果
     const cached = await getCachedTransformResult(
       environment,
       url,
@@ -168,16 +191,22 @@ async function doTransform(
 
   const resolved = module
     ? undefined
-    : ((await pluginContainer.resolveId(url, undefined)) ?? undefined)
+    : // 解析 url
+      ((await pluginContainer.resolveId(url, undefined)) ?? undefined)
 
   // resolve
+  // 确定模块 ID
+  // 模块ID > 解析ID > URL
   const id = module?.id ?? resolved?.id ?? url
 
+  // 尝试通过 ID 从模块图中获取模块
   module ??= environment.moduleGraph.getModuleById(id)
   if (module) {
     // if a different url maps to an existing loaded id,  make sure we relate this url to the id
+    // 确保 URL 与模块 ID 相关联
     await environment.moduleGraph._ensureEntryFromUrl(url, undefined, resolved)
     // try use cache from id
+    // 尝试从缓存获取转换结果
     const cached = await getCachedTransformResult(
       environment,
       url,
@@ -187,6 +216,7 @@ async function doTransform(
     if (cached) return cached
   }
 
+  // 加载并转换模块
   const result = loadAndTransform(
     environment,
     id,
@@ -198,6 +228,9 @@ async function doTransform(
   )
 
   const { depsOptimizer } = environment
+
+  // 检查模块是否为优化依赖文件
+  // 如果不是优化依赖文件，注册请求处理函数
   if (!depsOptimizer?.isOptimizedDepFile(id)) {
     environment._registerRequestProcessing(id, () => result)
   }
@@ -205,6 +238,14 @@ async function doTransform(
   return result
 }
 
+/**
+ *
+ * @param environment
+ * @param url
+ * @param module
+ * @param timestamp
+ * @returns
+ */
 async function getCachedTransformResult(
   environment: DevEnvironment,
   url: string,
@@ -233,6 +274,17 @@ async function getCachedTransformResult(
   }
 }
 
+/**
+ * 加载模块内容并通过插件系统对其进行转换，生成浏览器可执行的代码和相应的源码映射
+ * @param environment
+ * @param id
+ * @param url
+ * @param options
+ * @param timestamp
+ * @param mod
+ * @param resolved
+ * @returns
+ */
 async function loadAndTransform(
   environment: DevEnvironment,
   id: string,
@@ -246,8 +298,10 @@ async function loadAndTransform(
   const prettyUrl =
     debugLoad || debugTransform ? prettifyUrl(url, config.root) : ''
 
+  // 获取模块图
   const moduleGraph = environment.moduleGraph
 
+  // 检查 ID 是否被允许转换，不允许则抛出错误
   if (options.allowId && !options.allowId(id)) {
     const err: any = new Error(`Denied ID ${id}`)
     err.code = ERR_DENIED_ID
@@ -261,8 +315,10 @@ async function loadAndTransform(
 
   // load
   const loadStart = debugLoad ? performance.now() : 0
+  // 尝试加载模块
   const loadResult = await pluginContainer.load(id)
 
+  // 如果插件没有加载结果
   if (loadResult == null) {
     const file = cleanUrl(id)
 
@@ -276,6 +332,7 @@ async function loadAndTransform(
       isFileLoadingAllowed(environment.getTopLevelConfig(), slash(file))
     ) {
       try {
+        // 尝试从文件系统加载
         code = await fsp.readFile(file, 'utf-8')
         debugLoad?.(`${timeFrom(loadStart)} [fs] ${prettyUrl}`)
       } catch (e) {
@@ -283,6 +340,7 @@ async function loadAndTransform(
           throw e
         }
       }
+      // 确保加载的文件被监视（如果有文件监视器）
       if (code != null && environment.pluginContainer.watcher) {
         ensureWatchedFile(
           environment.pluginContainer.watcher,
@@ -293,6 +351,7 @@ async function loadAndTransform(
     }
     if (code) {
       try {
+        // 尝试从文件中提取源码映射
         const extracted = extractSourcemapFromFile(code, file)
         if (extracted) {
           code = extracted.code
@@ -305,6 +364,7 @@ async function loadAndTransform(
       }
     }
   } else {
+    // 如果插件加载了模块
     debugLoad?.(`${timeFrom(loadStart)} [plugin] ${prettyUrl}`)
     if (isObject(loadResult)) {
       code = loadResult.code
@@ -314,6 +374,8 @@ async function loadAndTransform(
       code = loadResult
     }
   }
+
+  // 抛出错误，区分公共文件和普通文件的错误信息
   if (code == null) {
     const isPublicFile = checkPublicFile(url, environment.getTopLevelConfig())
     let publicDirName = path.relative(config.root, config.publicDir)
@@ -335,6 +397,8 @@ async function loadAndTransform(
     err.code = isPublicFile ? ERR_LOAD_PUBLIC_URL : ERR_LOAD_URL
     throw err
   }
+
+  // 如果模块类型未定义，尝试从 ID 推断模块类型
   if (moduleType === undefined) {
     const guessedModuleType = getModuleTypeFromId(id)
     if (guessedModuleType && guessedModuleType !== 'js') {
@@ -342,14 +406,17 @@ async function loadAndTransform(
     }
   }
 
+  // 如果环境正在关闭且配置为可恢复，抛出服务器关闭错误
   if (environment._closing && environment.config.dev.recoverable)
     throwClosedServerError()
 
   // ensure module in graph after successful load
+  // 确保模块在模块图中，如果不存在则创建
   mod ??= await moduleGraph._ensureEntryFromUrl(url, undefined, resolved)
 
   // transform
   const transformStart = debugTransform ? performance.now() : 0
+  // 转换模块内容
   const transformResult = await pluginContainer.transform(code, id, {
     inMap: map,
     moduleType,
@@ -368,19 +435,25 @@ async function loadAndTransform(
 
   let normalizedMap: SourceMap | { mappings: '' } | null
   if (typeof map === 'string') {
+    // 从字符串解析源码映射
     normalizedMap = JSON.parse(map)
   } else if (map) {
+    // 直接使用映射对象
     normalizedMap = map as SourceMap | { mappings: '' }
   } else {
+    // 无源码映射
     normalizedMap = null
   }
 
   if (normalizedMap && 'version' in normalizedMap && mod.file) {
+    // 注入源码内容到模块文件
     if (normalizedMap.mappings) {
       await injectSourcesContent(normalizedMap, mod.file, logger)
     }
 
     const sourcemapPath = `${mod.file}.map`
+    // 根据配置的忽略列表处理源码映射
+    // 允许用户通过配置忽略某些文件的源码映射，提高构建性能和安全性
     applySourcemapIgnoreList(
       normalizedMap,
       sourcemapPath,
@@ -402,6 +475,7 @@ async function loadAndTransform(
           // with absolute paths).
           if (path.isAbsolute(sourcePath)) {
             modDirname ??= path.dirname(mod.file)
+            // 转换为相对于模块文件目录的相对路径
             normalizedMap.sources[sourcesIndex] = path.relative(
               modDirname,
               sourcePath,
@@ -412,10 +486,14 @@ async function loadAndTransform(
     }
   }
 
+  // 如果正在关闭且配置为可恢复，抛出服务器关闭错误
   if (environment._closing && environment.config.dev.recoverable)
     throwClosedServerError()
 
   const topLevelConfig = environment.getTopLevelConfig()
+
+  // moduleRunnerTransform 是否需要使用“模块运行器转换”
+  // ssr 需要；client 不需要
   const result = environment.config.dev.moduleRunnerTransform
     ? await ssrTransform(code, normalizedMap, url, originalCode, {
         json: {
@@ -425,14 +503,15 @@ async function loadAndTransform(
         },
       })
     : ({
-        code,
-        map: normalizedMap,
-        etag: getEtag(code, { weak: true }),
+        code, // 保持原始代码
+        map: normalizedMap, // sourcemap
+        etag: getEtag(code, { weak: true }), // 生成弱 ETag
       } satisfies TransformResult)
 
   // Only cache the result if the module wasn't invalidated while it was
   // being processed, so it is re-processed next time if it is stale
   if (timestamp > mod.lastInvalidationTimestamp)
+    // 更新模块图中的模块转换结果
     moduleGraph.updateModuleTransformResult(mod, result)
 
   return result

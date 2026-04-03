@@ -87,6 +87,9 @@ export type ResolvedUrl = [
   meta: object | null | undefined,
 ]
 
+/**
+ * 环境模块图
+ */
 export class EnvironmentModuleGraph {
   environment: string
 

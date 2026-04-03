@@ -102,6 +102,7 @@ const NODE_BUILTIN_NAMESPACE = 'node:'
 // Supported by Bun
 const BUN_BUILTIN_NAMESPACE = 'bun:'
 // Some runtimes like Bun injects namespaced modules here, which is not a node builtin
+// builtinModules为 node 内置模块列表，包含 node:fs、node:os、node:path 等
 const nodeBuiltins = builtinModules.filter((id) => !id.includes(':'))
 
 const isBuiltinCache = new WeakMap<
@@ -120,7 +121,9 @@ export function isBuiltin(builtins: (string | RegExp)[], id: string): boolean {
 
 export const nodeLikeBuiltins: (string | RegExp)[] = [
   ...nodeBuiltins,
+  // NODE_BUILTIN_NAMESPACE 为 node
   new RegExp(`^${NODE_BUILTIN_NAMESPACE}`),
+  // BUN_BUILTIN_NAMESPACE 为 bun:
   new RegExp(`^${BUN_BUILTIN_NAMESPACE}`),
 ]
 
@@ -994,7 +997,6 @@ export interface Hostname {
 export async function resolveHostname(
   optionsHost: string | boolean | undefined,
 ): Promise<Hostname> {
-
   let host: string | undefined
   if (optionsHost === undefined || optionsHost === false) {
     // Use a secure default
@@ -1286,6 +1288,13 @@ const rollupOptionsDeprecationCall = (() => {
   }
 })()
 
+/**
+ * 设置 Rollup 选项兼容代理
+ *
+ * @param buildConfig 构建环境选项
+ * @template T 构建环境选项类型
+ * @param path 路径
+ */
 export function setupRollupOptionCompat<
   T extends Pick<BuildEnvironmentOptions, 'rollupOptions' | 'rolldownOptions'>,
 >(
@@ -1296,7 +1305,10 @@ export function setupRollupOptionCompat<
 } {
   // if both rollupOptions and rolldownOptions are present,
   // ignore rollupOptions and use rolldownOptions
+  // 优先级：rolldownOptions > rollupOptions
   buildConfig.rolldownOptions ??= buildConfig.rollupOptions
+
+  // 仅在运行时路径包含 rollupOptions 时才检查
   if (
     runtimeDeprecatedPath.has(path) &&
     buildConfig.rollupOptions &&
@@ -1306,6 +1318,7 @@ export function setupRollupOptionCompat<
   }
 
   // proxy rolldownOptions to rollupOptions
+  // 代理 rolldownOptions 到 rollupOptions
   Object.defineProperty(buildConfig, 'rollupOptions', {
     get() {
       return buildConfig.rolldownOptions
@@ -1467,6 +1480,12 @@ export function mergeConfig<
   return mergeConfigRecursively(defaults, overrides, isRoot ? '' : '.')
 }
 
+/**
+ * 合并两个别名选项对象
+ * @param a 初始别名选项对象
+ * @param b 覆盖别名选项对象
+ * @returns 合并后的别名选项对象
+ */
 export function mergeAlias(
   a?: AliasOptions,
   b?: AliasOptions,
@@ -1481,10 +1500,19 @@ export function mergeAlias(
   return [...normalizeAlias(b), ...normalizeAlias(a)]
 }
 
+/**
+ * 将不同格式的别名配置标准化为统一的数组格式
+ * @param o 初始别名选项对象
+ * @returns 归一化后的别名选项对象数组
+ */
 export function normalizeAlias(o: AliasOptions = []): Alias[] {
   return Array.isArray(o)
-    ? o.map(normalizeSingleAlias)
-    : Object.keys(o).map((find) =>
+    ? // 处理标准化
+      o.map(normalizeSingleAlias)
+    : // 处理对象格式
+      // -> 转换为数组格式
+      // -> 归一化每个别名选项对象
+      Object.keys(o).map((find) =>
         normalizeSingleAlias({
           find,
           replacement: (o as any)[find],
@@ -1494,11 +1522,19 @@ export function normalizeAlias(o: AliasOptions = []): Alias[] {
 
 // https://github.com/vitejs/vite/issues/1363
 // work around https://github.com/rollup/plugins/issues/759
+/**
+ * 用于归一化单个别名配置，确保别名的格式一致，特别是处理路径末尾的斜杠问题
+ * @param param0 初始别名选项对象
+ * @returns
+ */
 function normalizeSingleAlias({
   find,
   replacement,
   customResolver,
 }: Alias): Alias {
+  // find为字符串
+  // find 和 replacement  都以 '/' 结尾
+  // -> 移除它们末尾的 '/'
   if (
     typeof find === 'string' &&
     find.endsWith('/') &&
@@ -1508,11 +1544,13 @@ function normalizeSingleAlias({
     replacement = replacement.slice(0, replacement.length - 1)
   }
 
+  // 创建归一化后的别名选项对象
   const alias: Alias = {
     find,
     replacement,
   }
   if (customResolver) {
+    // 标记已废弃
     alias.customResolver = customResolver
   }
   return alias
@@ -1771,6 +1809,10 @@ const parentSigtermCallback: SigtermCallback = async (signal, exitCode) => {
   await Promise.all([...sigtermCallbacks].map((cb) => cb(signal, exitCode)))
 }
 
+/**
+ * 设置 SIGTERM 信号监听器
+ * @param callback 要调用的回调函数
+ */
 export const setupSIGTERMListener = (
   callback: (signal?: 'SIGTERM', exitCode?: number) => Promise<void>,
 ): void => {
@@ -1783,6 +1825,10 @@ export const setupSIGTERMListener = (
   sigtermCallbacks.add(callback)
 }
 
+/**
+ * 移除 SIGTERM 信号监听器
+ * @param callback 要移除的回调函数
+ */
 export const teardownSIGTERMListener = (
   callback: Parameters<typeof setupSIGTERMListener>[0],
 ): void => {
@@ -1795,6 +1841,13 @@ export const teardownSIGTERMListener = (
   }
 }
 
+/**
+ * 根据主机名获取服务器 URL
+ *
+ * @param resolvedUrls 已解析的服务器 URL 对象
+ * @param host 主机名
+ * @returns
+ */
 export function getServerUrlByHost(
   resolvedUrls: ResolvedServerUrls | null,
   host: CommonServerOptions['host'],

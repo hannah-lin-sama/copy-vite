@@ -70,6 +70,7 @@ export class DevEnvironment extends BaseEnvironment {
 
   get pluginContainer(): EnvironmentPluginContainer<DevEnvironment> {
     if (!this._pluginContainer)
+      // 抛出错误，提示插件容器未初始化，不能调用
       throw new Error(
         `${this.name} environment.pluginContainer called before initialized`,
       )
@@ -120,9 +121,12 @@ export class DevEnvironment extends BaseEnvironment {
   ) {
     // 获取环境对应的配置
     let options = config.environments[name]
+
+    // 配置不存在，抛出错误
     if (!options) {
       throw new Error(`Environment "${name}" is not defined in the config.`)
     }
+    // 合并环境选项
     if (context.options) {
       options = mergeConfig(
         options,
@@ -131,27 +135,38 @@ export class DevEnvironment extends BaseEnvironment {
     }
     super(name, config, options)
 
+    // 存储待处理请求
     this._pendingRequests = new Map()
 
+    // 初始化模块依赖图
+    // 参数- name 环境名称
+    // 参数- 模块解析函数
     this.moduleGraph = new EnvironmentModuleGraph(name, (url: string) =>
       this.pluginContainer!.resolveId(url, undefined),
     )
 
-    // 初始化 _crawlEndFinder，用于检测模块依赖图是否爬取完成
+    // 创建 CrawlEndFinder 实例，用于检测模块依赖图是否爬取完成
     this._crawlEndFinder = setupOnCrawlEnd()
 
+    // 存储远程运行器选项
     this._remoteRunnerOptions = context.remoteRunner ?? {}
 
+    // 设置热更新通道
     this.hot = context.transport
       ? isWebSocketServer in context.transport
         ? context.transport
-        : normalizeHotChannel(context.transport, context.hot)
-      : normalizeHotChannel({}, context.hot)
+        : // 标准化热更新通道
+          normalizeHotChannel(context.transport, context.hot)
+      : // 如果没有提供热更新通道，创建一个空通道
+        normalizeHotChannel({}, context.hot)
 
+    // 设置热更新通道的调用处理函数
     this.hot.setInvokeHandler({
+      // 获取模块
       fetchModule: (id, importer, options) => {
         return this.fetchModule(id, importer, options)
       },
+      // 获取内置模块
       getBuiltins: async () => {
         return this.config.resolve.builtins.map((builtin) =>
           typeof builtin === 'string'
@@ -161,6 +176,7 @@ export class DevEnvironment extends BaseEnvironment {
       },
     })
 
+    // 监听热更新通道的无效事件
     this.hot.on(
       'vite:invalidate',
       async ({ path, message, firstInvalidatedBy }, client) => {
@@ -175,12 +191,19 @@ export class DevEnvironment extends BaseEnvironment {
       },
     )
 
+    // 初始化依赖优化器
     if (!context.disableDepsOptimizer) {
       const { optimizeDeps } = this.config
+
+      // 如果提供了依赖优化器，直接使用
       if (context.depsOptimizer) {
         this.depsOptimizer = context.depsOptimizer
+
+        // 如果禁用了依赖优化，设置为 undefined
       } else if (isDepOptimizationDisabled(optimizeDeps)) {
         this.depsOptimizer = undefined
+
+        // 如果没有禁用依赖优化，创建依赖优化器
       } else {
         this.depsOptimizer = (
           optimizeDeps.noDiscovery
@@ -193,8 +216,8 @@ export class DevEnvironment extends BaseEnvironment {
 
   /**
    * 创建插件容器
-   * @param options 
-   * @returns 
+   * @param options
+   * @returns
    */
   async init(options?: {
     watcher?: FSWatcher
@@ -212,9 +235,9 @@ export class DevEnvironment extends BaseEnvironment {
     this._initiated = true // 标记为已初始化
     // 创建插件容器
     this._pluginContainer = await createEnvironmentPluginContainer(
-      this,
-      this.config.plugins,
-      options?.watcher,
+      this, // 环境实例
+      this.config.plugins, // 插件数组
+      options?.watcher, // 文件系统监听器
     )
   }
 
@@ -228,16 +251,18 @@ export class DevEnvironment extends BaseEnvironment {
   async listen(server: ViteDevServer): Promise<void> {
     // 热更新通道监听
     this.hot.listen()
+    // 初始化依赖优化器
     await this.depsOptimizer?.init()
+    // 预热文件
     warmupFiles(server, this)
   }
 
   /**
-   * 
-   * @param id 
-   * @param importer 
-   * @param options 
-   * @returns 
+   *
+   * @param id
+   * @param importer
+   * @param options
+   * @returns
    */
   fetchModule(
     id: string,
@@ -251,11 +276,17 @@ export class DevEnvironment extends BaseEnvironment {
   }
 
   /**
-   * 
-   * @param module 
+   * 重新加载指定的模块，并通过热模块替换（HMR）机制将更新传播到客户端
+   * @param module
    */
   async reloadModule(module: EnvironmentModuleNode): Promise<void> {
+    // HMR 启用检查：确保热模块替换功能未被禁用
+    // 文件路径检查：确保模块有对应的文件路径
     if (this.config.server.hmr !== false && module.file) {
+      // this 当前环境实例
+      // module.file 模块文件路径
+      // [module] 要更新的模块的数组
+      // monotonicDateNow() 当前时间戳，用于版本控制
       updateModules(this, module.file, [module], monotonicDateNow())
     }
   }
@@ -269,15 +300,17 @@ export class DevEnvironment extends BaseEnvironment {
   }
 
   /**
-   * 预热请求
-   * @param url 
-   * @returns 
+   * 用于预热（提前处理）指定 URL 的请求，以减少首次访问时的加载时间，提高开发服务器的响应速度。
+   * @param url
+   * @returns
    */
   async warmupRequest(url: string): Promise<void> {
     try {
+      // 尝试转换请求
       await this.transformRequest(url)
     } catch (e) {
       if (
+        // 过时的优化依赖或已关闭的服务器错误
         e?.code === ERR_OUTDATED_OPTIMIZED_DEP ||
         e?.code === ERR_CLOSED_SERVER
       ) {
@@ -286,6 +319,7 @@ export class DevEnvironment extends BaseEnvironment {
       }
       // Unexpected error, log the issue but avoid an unhandled exception
       this.logger.error(
+        // 构建错误消息
         buildErrorMessage(e, [`Pre-transform error: ${e.message}`], false),
         {
           error: e,
@@ -295,6 +329,11 @@ export class DevEnvironment extends BaseEnvironment {
     }
   }
 
+  /**
+   *
+   * @param m
+   * @param _client
+   */
   protected invalidateModule(
     m: {
       path: string
@@ -328,20 +367,31 @@ export class DevEnvironment extends BaseEnvironment {
     }
   }
 
+  /**
+   * 关闭开发环境，清理相关资源，包括插件容器、依赖优化器、热通道等，并等待所有待处理的请求完成
+   */
   async close(): Promise<void> {
+    // 标记为已关闭
     this._closing = true
 
+    // 取消正在进行的依赖爬取
     this._crawlEndFinder.cancel()
+
+    // 并行关闭资源
     await Promise.allSettled([
+      // 关闭插件容器
       this.pluginContainer.close(),
+      // 关闭依赖优化器
       this.depsOptimizer?.close(),
       // WebSocketServer is independent of HotChannel and should not be closed on environment close
+      // 关闭热通道
       isWebSocketServer in this.hot ? Promise.resolve() : this.hot.close(),
       (async () => {
+        // 循环等待多所有请求完成
         while (this._pendingRequests.size > 0) {
           await Promise.allSettled(
             [...this._pendingRequests.values()].map(
-              (pending) => pending.request,
+              (pending) => pending.request, // 是 promise
             ),
           )
         }
@@ -357,6 +407,7 @@ export class DevEnvironment extends BaseEnvironment {
    * processed will resolve immediately.
    * @experimental
    */
+  // 用于等待模块依赖爬取过程中的所有请求处理完成
   waitForRequestsIdle(ignoredId?: string): Promise<void> {
     return this._crawlEndFinder.waitForRequestsIdle(ignoredId)
   }
@@ -369,11 +420,15 @@ export class DevEnvironment extends BaseEnvironment {
   }
 }
 
+// 用于控制模块依赖爬取过程中判断空闲状态的超时时间。
 const callCrawlEndIfIdleAfterMs = 50
 
 interface CrawlEndFinder {
+  // 注册一个正在处理的请求，将其加入到跟踪列表中
   registerRequestProcessing: (id: string, done: () => Promise<any>) => void
+  //等待所有注册的请求处理完成，可选忽略某个特定请求
   waitForRequestsIdle: (ignoredId?: string) => Promise<void>
+  // 取消正在处理的请求，终止爬取过程
   cancel: () => void
 }
 

@@ -538,7 +538,8 @@ export function getTSConfigResolutionCache(
 }
 
 /**
- * 处理 TypeScript tsconfig.json 文件变化事件
+ * 当 TypeScript 配置文件（tsconfig.json）发生变化时，
+ * 清空缓存并强制全量重载，确保 TypeScript 代码能够使用更新后的配置进行编译。
  * @param server 服务器实例
  * @param changedFile 变化文件路径
  */
@@ -548,7 +549,9 @@ export async function reloadOnTsconfigChange(
 ): Promise<void> {
   // any tsconfig.json that's added in the workspace could be closer to a code file than a previously cached one
   // any json file in the tsconfig cache could have been used to compile ts
+  // 首先检查变化的文件是否是 .json 文件
   if (changedFile.endsWith('.json')) {
+    // 获取 TypeScript 配置解析缓存
     const cache = getTSConfigResolutionCache(server.config)
 
     // 精准匹配 - 仅处理 tsconfig.json 文件

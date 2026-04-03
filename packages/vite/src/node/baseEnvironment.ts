@@ -10,6 +10,9 @@ const environmentColors = [
   colors.gray,
 ]
 
+/**
+ * 基础环境类，用于创建环境实例
+ */
 export class PartialEnvironment {
   name: string
   getTopLevelConfig(): ResolvedConfig {
@@ -36,6 +39,7 @@ export class PartialEnvironment {
   ) {
     // only allow some characters so that we can use name without escaping for directory names
     // and make users easier to access with `environments.*`
+    // 验证环境名称，只允许字母、数字、下划线和美元符号
     if (!/^[\w$]+$/.test(name)) {
       throw new Error(
         `Invalid environment name "${name}". Environment names must only contain alphanumeric characters and "$", "_".`,
@@ -44,6 +48,8 @@ export class PartialEnvironment {
     this.name = name
     this._topLevelConfig = topLevelConfig
     this._options = options
+
+    // 配置代理，用于访问环境选项和顶级配置
     this.config = new Proxy(
       options as ResolvedConfig & ResolvedEnvironmentOptions,
       {
@@ -58,6 +64,8 @@ export class PartialEnvironment {
         },
       },
     )
+
+    // 日志系统初始化
     const environment = colors.dim(`(${this.name})`)
     const colorIndex =
       [...this.name].reduce((acc, c) => acc + c.charCodeAt(0), 0) %

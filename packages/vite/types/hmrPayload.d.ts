@@ -16,7 +16,7 @@ export interface ConnectedPayload {
 
 // 用于保持连接活跃的心跳消息。客户端收到后通常不需要做任何处理，但可用来检测连接是否正常。
 export interface PingPayload {
-  type: 'ping' // 
+  type: 'ping' //
 }
 
 // 热更新消息，告知客户端哪些模块需要更新。
@@ -37,7 +37,7 @@ export interface Update {
    * This only exists when full-bundle mode is enabled.
    */
   url?: string // HMR 补丁块（patch chunk）的 URL
-  path: string // 需要更新的模块在模块图中的规范化路径（
+  path: string // 需要更新的模块在模块图中的规范化路径
   acceptedPath: string // 实际接受更新的模块路径
   timestamp: number // 模块编译时的时间戳
   /** @internal */
@@ -56,7 +56,7 @@ export interface Update {
 
 // 当模块被移除（例如动态 import 的模块不再被任何模块引用）时，通知客户端清理
 export interface PrunePayload {
-  type: 'prune' 
+  type: 'prune'
   paths: string[]
 }
 

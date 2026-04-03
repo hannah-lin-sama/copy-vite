@@ -4,6 +4,13 @@ import { cleanUrl, withTrailingSlash } from '../../../shared/utils'
 
 // this middleware is only active when (base !== '/')
 
+/**
+ * 基础 URL 中间件
+ *
+ * @param rawBase 基础 URL
+ * @param middlewareMode 是否在中间件模式下运行
+ * @returns 中间件函数
+ */
 export function baseMiddleware(
   rawBase: string,
   middlewareMode: boolean,

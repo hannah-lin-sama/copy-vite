@@ -140,11 +140,14 @@ async function createClientConfigValueReplacer(
 export async function getHmrImplementation(
   config: ResolvedConfig,
 ): Promise<string> {
+  // 读取客户端入口文件内容
   const content = fs.readFileSync(normalizedClientEntry, 'utf-8')
+  //  创建配置值替换器
   const replacer = await createClientConfigValueReplacer(config)
   return (
     replacer(content)
       // the rolldown runtime cannot import a module
+      // Rolldown（Vite 8 的底层打包器）的运行时无法处理这种直接导入模块的语句，因此需要将其删除。
       .replace(/import\s*['"]@vite\/env['"]/, '')
   )
 }

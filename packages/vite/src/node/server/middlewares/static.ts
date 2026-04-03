@@ -77,11 +77,20 @@ const sirvOptions = ({
   }
 }
 
+/**
+ * 为 Vite 开发服务器提供静态文件服务，
+ * 特别是处理公共目录（public directory）中的文件，确保这些文件能够被正确访问。
+ * @param server Vite 服务器实例
+ * @param publicFiles 已知的 public 文件路径集合
+ * @returns Connect 中间件函数
+ */
 export function servePublicMiddleware(
   server: ViteDevServer,
   publicFiles?: Set<string>,
 ): Connect.NextHandleFunction {
   const dir = server.config.publicDir
+
+  // 创建一个静态文件服务函数
   const serve = sirv(
     dir,
     sirvOptions({
@@ -91,6 +100,7 @@ export function servePublicMiddleware(
     }),
   )
 
+  // 定义路径转换函数
   const toFilePath = (url: string) => {
     let filePath = cleanUrl(url)
     if (filePath.indexOf('%') !== -1) {
@@ -104,19 +114,26 @@ export function servePublicMiddleware(
   }
 
   // Keep the named function. The name is visible in debug logs via `DEBUG=connect:dispatcher ...`
+  // 返回中间件函数
   return function viteServePublicMiddleware(req, res, next) {
     // To avoid the performance impact of `existsSync` on every request, we check against an
     // in-memory set of known public files. This set is updated on restarts.
     // also skip import request and internal requests `/@fs/ /@vite-client` etc...
     if (
+      // 检查请求的 URL 是否对应一个已知的公共文件
       (publicFiles && !publicFiles.has(toFilePath(req.url!))) ||
+      // 检查是否是导入请求（如 /@modules/ 开头的请求）
       isImportRequest(req.url!) ||
+      // 检查是否是内部请求（如 /@fs/、/@vite-client 等）
       isInternalRequest(req.url!) ||
       // for `/public-file.js?url` to be transformed
+      // 检查 URL 是否包含查询参数（如 ?url）
       urlRE.test(req.url!)
     ) {
+      // 调用next处理
       return next()
     }
+    // 调用serve处理
     serve(req, res, next)
   }
 }

@@ -174,31 +174,55 @@ export const isAsyncScriptMap: WeakMap<
   Map<string, boolean>
 > = new WeakMap()
 
+/**
+ * 判断节点是否为元素节点
+ * @param node 节点
+ * @returns 是否为元素节点
+ */
 export function nodeIsElement(
   node: DefaultTreeAdapterMap['node'],
 ): node is DefaultTreeAdapterMap['element'] {
+  // 检查节点的 nodeName 属性的第一个字符是否不是 #，不是则为元素节点
+  // 原理：在 parse5 解析器生成的 AST 中：
+  // 元素节点的 nodeName 是标签名（如 "div"、"span" 等）
+  // 非元素节点的 nodeName 以 # 开头（如 "#text"、"#comment"、"#document" 等）
   return node.nodeName[0] !== '#'
 }
 
+/**
+ * 遍历节点树，对每个节点调用 visitor 函数
+ * @param node 节点
+ * @param visitor 节点访问函数
+ */
 function traverseNodes(
   node: DefaultTreeAdapterMap['node'],
   visitor: (node: DefaultTreeAdapterMap['node']) => void,
 ) {
   if (node.nodeName === 'template') {
+    // 直接使用其 content 属性（文档片段）作为当前节点
+    // 因为 template 标签的内容不会直接渲染，而是作为模板使用
     node = (node as DefaultTreeAdapterMap['template']).content
   }
   visitor(node)
   if (
-    nodeIsElement(node) ||
-    node.nodeName === '#document' ||
-    node.nodeName === '#document-fragment'
+    nodeIsElement(node) || // 元素节点
+    node.nodeName === '#document' || // 文档节点
+    node.nodeName === '#document-fragment' // 文档片段节点
   ) {
+    // 递归遍历子节点
     node.childNodes.forEach((childNode) => traverseNodes(childNode, visitor))
   }
 }
 
 type ParseWarnings = Partial<Record<ErrorCodes, string>>
 
+/**
+ * 遍历 HTML 字符串的 AST 树，对每个节点调用 visitor 函数
+ * @param html HTML 字符串
+ * @param filePath HTML 文件路径
+ * @param warn 日志记录器
+ * @param visitor 节点访问函数
+ */
 export async function traverseHtml(
   html: string,
   filePath: string,
@@ -206,15 +230,20 @@ export async function traverseHtml(
   visitor: (node: DefaultTreeAdapterMap['node']) => void,
 ): Promise<void> {
   // lazy load compiler
+  // 懒加载 parse5 库，减少初始加载时间
   const { parse } = await import('parse5')
   const warnings: ParseWarnings = {}
   const ast = parse(html, {
+    // 解析 <noscript> 标签内的内容
     scriptingEnabled: false, // parse inside <noscript>
+    // 保留源代码位置信息，便于后续定位和修改
     sourceCodeLocationInfo: true,
+    // 处理解析过程中的错误
     onParseError: (e: ParserError) => {
       handleParseError(e, html, filePath, warnings)
     },
   })
+  // 深度遍历解析生成的 AST 树，对每个节点调用 visitor 函数
   traverseNodes(ast, visitor)
 
   for (const message of Object.values(warnings)) {
@@ -222,20 +251,29 @@ export async function traverseHtml(
   }
 }
 
+/**
+ * 获取脚本节点的信息，包括其源文件路径、模块类型、加载方式等属性。
+ * @param node 脚本节点
+ * @returns 脚本节点的信息
+ */
 export function getScriptInfo(node: DefaultTreeAdapterMap['element']): {
-  src: Token.Attribute | undefined
-  srcSourceCodeLocation: Token.Location | undefined
-  isModule: boolean
-  isAsync: boolean
-  isIgnored: boolean
+  src: Token.Attribute | undefined // 脚本节点的 src 属性
+  srcSourceCodeLocation: Token.Location | undefined // 脚本节点的 src 属性的源代码位置信息
+  isModule: boolean // 是否为ES模块脚本
+  isAsync: boolean // 是否异步加载
+  isIgnored: boolean // 是否被忽略加载
 } {
   let src: Token.Attribute | undefined
   let srcSourceCodeLocation: Token.Location | undefined
   let isModule = false
   let isAsync = false
   let isIgnored = false
+
+  // 遍历脚本节点的所有属性
   for (const p of node.attrs) {
+    // 跳过有前缀的属性
     if (p.prefix !== undefined) continue
+    // 只记录第一个出现的 src 属性，并获取其源代码位置
     if (p.name === 'src') {
       if (!src) {
         src = p
@@ -254,15 +292,24 @@ export function getScriptInfo(node: DefaultTreeAdapterMap['element']): {
 
 const attrValueStartRE = /=\s*(.)/
 
+/**
+ * 重写 HTML 字符串中的属性值
+ * @param s HTML 字符串
+ * @param sourceCodeLocation 属性值的源代码位置信息
+ * @param newValue 新的属性值
+ * @returns HTML 字符串
+ */
 export function overwriteAttrValue(
   s: MagicString,
   sourceCodeLocation: Token.Location,
   newValue: string,
 ): MagicString {
+  // 从 HTML 字符串中提取属性值
   const srcString = s.slice(
     sourceCodeLocation.startOffset,
     sourceCodeLocation.endOffset,
   )
+  // 查找属性值的起始位置
   const valueStart = attrValueStartRE.exec(srcString)
   if (!valueStart) {
     // overwrite attr value can only be called for a well-defined value
@@ -270,8 +317,10 @@ export function overwriteAttrValue(
       `[vite:html] internal error, failed to overwrite attribute value`,
     )
   }
+  // 处理属性值的引号包装
   const wrapOffset = valueStart[1] === '"' || valueStart[1] === "'" ? 1 : 0
   const valueOffset = valueStart.index! + valueStart[0].length - 1
+  // 更新 HTML 字符串中的属性值
   s.update(
     sourceCodeLocation.startOffset + valueOffset + wrapOffset,
     sourceCodeLocation.endOffset - wrapOffset,
@@ -280,6 +329,12 @@ export function overwriteAttrValue(
   return s
 }
 
+/**
+ * 从 HTML 字符串中移除 vite-ignore 属性
+ * @param s HTML 字符串
+ * @param sourceCodeLocation 属性的源代码位置信息
+ * @returns HTML 字符串
+ */
 export function removeViteIgnoreAttr(
   s: MagicString,
   sourceCodeLocation: Token.Location,
@@ -1044,6 +1099,11 @@ export function buildHtmlPlugin(config: ResolvedConfig): Plugin {
   }
 }
 
+/**
+ * 解析 HTML 元素的 rel 属性值，将其拆分为数组并转换为小写形式
+ * @param attr rel 属性值
+ * @returns 解析后的 rel 属性值数组
+ */
 export function parseRelAttr(attr: string): string[] {
   return attr.split(spaceRe).map((v) => v.toLowerCase())
 }
@@ -1206,18 +1266,29 @@ export function injectCspNonceMetaTagHook(
 /**
  * Support `%ENV_NAME%` syntax in html files
  */
+/**
+ * 创建一个 HTML 转换钩子，该钩子负责在 HTML 文件中替换环境变量占位符。
+ * @param config 解析后的配置对象
+ * @returns
+ */
 export function htmlEnvHook(config: ResolvedConfig): IndexHtmlTransformHook {
+  // 匹配非空格字符的环境变量占位符，如 %ENV_NAME%
   const pattern = /%(\S+?)%/g
+  // 解析环境变量前缀，如 import.meta.env.DEV
   const envPrefix = resolveEnvPrefix({ envPrefix: config.envPrefix })
   const env: Record<string, any> = { ...config.env }
 
   // account for user env defines
+  // 遍历用户定义的环境变量
   for (const key in config.define) {
+    // 检查环境变量是否以 import.meta.env. 开头
     if (key.startsWith(`import.meta.env.`)) {
+      // 提取环境变量值
       const val = config.define[key]
       if (typeof val === 'string') {
         try {
           const parsed = JSON.parse(val)
+          // 将处理后的值添加到 env 对象中，键为去掉 import.meta.env. 前缀的部分
           env[key.slice(16)] = typeof parsed === 'string' ? parsed : val
         } catch {
           env[key.slice(16)] = val
@@ -1227,11 +1298,14 @@ export function htmlEnvHook(config: ResolvedConfig): IndexHtmlTransformHook {
       }
     }
   }
+  // 返回一个 HTML 转换钩子函数，该函数负责在 HTML 文件中替换环境变量占位符
   return (html, ctx) => {
     return html.replace(pattern, (text, key) => {
       if (key in env) {
+        // 如果环境变量在 env 对象中，直接返回其值
         return env[key]
       } else {
+        // 如果变量不存在但以环境变量前缀开头，就发出警告
         if (envPrefix.some((prefix) => key.startsWith(prefix))) {
           const relativeHtml = normalizePath(
             path.relative(config.root, ctx.filename),
@@ -1299,6 +1373,11 @@ export function injectNonceAttributeTagHook(
   }
 }
 
+/**
+ * 分析插件数组，将 transformIndexHtml 钩子函数分类为 pre、normal 和 post 数组
+ * @param plugins 插件数组
+ * @returns 分类后的数组
+ */
 export function resolveHtmlTransforms(
   plugins: readonly Plugin[],
 ): [
@@ -1332,6 +1411,7 @@ export function resolveHtmlTransforms(
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/HTML/Element/head#see_also
+// 允许在 <head> 元素中使用的标签
 const elementsAllowedInHead = new Set([
   'title',
   'base',
@@ -1343,16 +1423,24 @@ const elementsAllowedInHead = new Set([
   'template',
 ])
 
+/** 检查要插入到 HTML 头部的标签是否合法，确保只有允许在 <head> 元素中使用的标签被插入检查 HTML 元素是否在 head 元素中插入
+ * @param tags HTML 元素描述符数组
+ * @param ctx 转换上下文
+ * @returns
+ */
 function headTagInsertCheck(
   tags: HtmlTagDescriptor[],
   ctx: IndexHtmlTransformContext,
 ) {
   if (!tags.length) return
   const { logger } = ctx.server?.config || {}
+
+  // 过滤出不允许在 <head> 元素中使用的标签
   const disallowedTags = tags.filter(
     (tagDescriptor) => !elementsAllowedInHead.has(tagDescriptor.tag),
   )
 
+  // 如果有不允许在 <head> 元素中使用的标签，记录警告日志
   if (disallowedTags.length) {
     const dedupedTags = unique(
       disallowedTags.map((tagDescriptor) => `<${tagDescriptor.tag}>`),
@@ -1367,21 +1455,34 @@ function headTagInsertCheck(
   }
 }
 
+/**
+ * 应用 HTML 转换钩子，处理和转换 HTML 内容。
+ * 它支持插件通过不同方式修改 HTML，包括直接修改 HTML 字符串或注入额外的 HTML 标签。
+ * @param html HTML 内容
+ * @param hooks 钩子函数数组
+ * @param pluginContext 插件上下文
+ * @param ctx 转换上下文
+ * @returns HTML 内容
+ */
 export async function applyHtmlTransforms(
   html: string,
   hooks: IndexHtmlTransformHook[],
   pluginContext: MinimalPluginContextWithoutEnvironment,
   ctx: IndexHtmlTransformContext,
 ): Promise<string> {
+  // 遍历钩子函数，应用每个钩子函数
   for (const hook of hooks) {
+    // 调用钩子函数
     const res = await hook.call(pluginContext, html, ctx)
     if (!res) {
       continue
     }
+    // 如果钩子函数返回的是字符串，直接赋值给 html
     if (typeof res === 'string') {
       html = res
     } else {
       let tags: HtmlTagDescriptor[]
+      // 如果钩子函数返回的是数组，直接赋值给 tags
       if (Array.isArray(res)) {
         tags = res
       } else {
@@ -1389,9 +1490,13 @@ export async function applyHtmlTransforms(
         tags = res.tags
       }
 
+      // 插入到 <head> 元素末尾
       let headTags: HtmlTagDescriptor[] | undefined
+      // 插入到 <head> 元素开头
       let headPrependTags: HtmlTagDescriptor[] | undefined
+      // 插入到 <body> 元素末尾
       let bodyTags: HtmlTagDescriptor[] | undefined
+      // 插入到 <body> 元素开头
       let bodyPrependTags: HtmlTagDescriptor[] | undefined
 
       for (const tag of tags) {
@@ -1428,6 +1533,12 @@ function isEntirelyImport(code: string) {
   return entirelyImportRE.test(code.trim())
 }
 
+/**
+ * 获取 HTML 中的 base URL，根据配置和当前文件路径动态调整
+ * @param urlRelativePath 相对路径
+ * @param config 配置对象
+ * @returns base URL
+ */
 function getBaseInHTML(urlRelativePath: string, config: ResolvedConfig) {
   // Prefer explicit URL if defined for linking to assets and public files from HTML,
   // even when base relative is specified
@@ -1439,7 +1550,10 @@ function getBaseInHTML(urlRelativePath: string, config: ResolvedConfig) {
     : config.base
 }
 
+// 捕获组：([ \t]*) - 捕获 </head> 标签前的空白字符（空格或制表符）
 const headInjectRE = /([ \t]*)<\/head>/i
+// 捕获组：([ \t]*) - 捕获 <head> 标签前的空白字符
+// 匹配：<head[^>]*> - 匹配 <head> 开始标签及其所有属性
 const headPrependInjectRE = /([ \t]*)<head[^>]*>/i
 
 const htmlInjectRE = /<\/html>/i
@@ -1450,6 +1564,13 @@ const bodyPrependInjectRE = /([ \t]*)<body[^>]*>/i
 
 const doctypePrependInjectRE = /<!doctype html>/i
 
+/**
+ * 插入 HTML 标签到 <head> 元素末尾或开头
+ * @param html HTML 内容
+ * @param tags HTML 标签描述符数组
+ * @param prepend 是否在开头插入
+ * @returns HTML 内容
+ */
 function injectToHead(
   html: string,
   tags: HtmlTagDescriptor[],
@@ -1457,6 +1578,7 @@ function injectToHead(
 ) {
   if (tags.length === 0) return html
 
+  // 前置注入
   if (prepend) {
     // inject as the first element of head
     if (headPrependInjectRE.test(html)) {
@@ -1465,6 +1587,7 @@ function injectToHead(
         (match, p1) => `${match}\n${serializeTags(tags, incrementIndent(p1))}`,
       )
     }
+    // 后置注入
   } else {
     // inject before head close
     if (headInjectRE.test(html)) {
@@ -1538,13 +1661,21 @@ function prependInjectFallback(html: string, tags: HtmlTagDescriptor[]) {
 
 const unaryTags = new Set(['link', 'meta', 'base'])
 
+/**
+ * 将 HTML 标签描述符序列化为 HTML 字符串，支持处理自闭合标签和常规标签，并递归处理子元素
+ * @param param0 HTML 标签描述符
+ * @param indent 缩进字符串
+ * @returns HTML 标符串
+ */
 function serializeTag(
   { tag, attrs, children }: HtmlTagDescriptor,
   indent: string = '',
 ): string {
+  // 处理自闭合标签
   if (unaryTags.has(tag)) {
     return `<${tag}${serializeAttrs(attrs)}>`
   } else {
+    // 处理常规标签
     return `<${tag}${serializeAttrs(attrs)}>${serializeTags(
       children,
       incrementIndent(indent),
@@ -1552,6 +1683,12 @@ function serializeTag(
   }
 }
 
+/**
+ * 递归序列化 HTML 标签描述符数组为字符串
+ * @param tags HTML 标签描述符数组
+ * @param indent 缩进字符串
+ * @returns HTML 标符串
+ */
 function serializeTags(
   tags: HtmlTagDescriptor['children'],
   indent: string = '',
@@ -1564,18 +1701,32 @@ function serializeTags(
   return ''
 }
 
+/**
+ * 序列化 HTML 标签属性为字符串
+ * @param attrs HTML 标签属性
+ * @returns
+ */
 function serializeAttrs(attrs: HtmlTagDescriptor['attrs']): string {
   let res = ''
   for (const key in attrs) {
+    // 处理布尔属性
     if (typeof attrs[key] === 'boolean') {
+      // 如果值为 true，添加属性名（如 disabled）
+      // 如果值为 false，不添加任何内容
       res += attrs[key] ? ` ${key}` : ``
     } else {
+      // 使用 escapeHtml 函数对属性值进行 HTML 转义，防止 XSS 攻击
       res += ` ${key}="${escapeHtml(attrs[key])}"`
     }
   }
   return res
 }
 
+/**
+ * 增加缩进字符串
+ * @param indent 缩进字符串
+ * @returns 新的缩进字符串
+ */
 function incrementIndent(indent: string = '') {
   return `${indent}${indent[0] === '\t' ? '\t' : '  '}`
 }

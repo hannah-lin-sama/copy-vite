@@ -94,15 +94,24 @@ export function loadEnv(
   return env
 }
 
+/**
+ * 解析环境变量前缀
+ * @param param0 配置对象
+ * @param param0.envPrefix 环境变量前缀数组
+ * @returns
+ */
 export function resolveEnvPrefix({
-  envPrefix = 'VITE_',
+  envPrefix = 'VITE_', // 默认前缀为 VITE_
 }: UserConfig): string[] {
+  // 确保 envPrefix 是一个数组
   envPrefix = arraify(envPrefix)
+  // 检查 envPrefix 是否包含空字符串
   if (envPrefix.includes('')) {
     throw new Error(
       `envPrefix option contains value '', which could lead unexpected exposure of sensitive information.`,
     )
   }
+  // 检查 envPrefix 是否包含包含空格的字符串
   if (envPrefix.some((prefix) => /\s/.test(prefix))) {
     // eslint-disable-next-line no-console
     console.warn(

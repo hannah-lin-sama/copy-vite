@@ -155,12 +155,14 @@ export async function createEnvironmentPluginContainer<
   watcher?: FSWatcher,
   autoStart = true,
 ): Promise<EnvironmentPluginContainer<Env>> {
+  // 创建环境插件容器
   const container = new EnvironmentPluginContainer(
     environment,
     plugins,
     watcher,
     autoStart,
   )
+  // 解析Rollup选项
   await container.resolveRollupOptions()
   return container
 }
@@ -172,6 +174,9 @@ export type SkipInformation = {
   called?: boolean
 }
 
+/**
+ * 环境插件容器
+ */
 class EnvironmentPluginContainer<Env extends Environment = Environment> {
   private _pluginContextMap = new Map<Plugin, PluginContext>()
   private _resolvedRollupOptions?: InputOptions
@@ -1060,6 +1065,9 @@ class LoadPluginContext extends PluginContext {
   }
 }
 
+/**
+ *
+ */
 class TransformPluginContext
   extends LoadPluginContext
   implements Omit<RollupTransformPluginContext, 'cache'>
@@ -1179,7 +1187,11 @@ export type {
 }
 
 // Backward compatibility
+/**
+ * 插件容器
+ */
 class PluginContainer {
+  // 接收一个环境映射对象并将其存储为私有属性 environments
   constructor(private environments: Record<string, Environment>) {}
 
   // Backward compatibility

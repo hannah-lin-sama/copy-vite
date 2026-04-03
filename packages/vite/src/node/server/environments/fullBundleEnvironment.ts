@@ -58,7 +58,9 @@ export class MemoryFiles {
     this.files.clear()
   }
 }
-
+/**
+ * 完整包模式环境，用于开发环境下的热模块替换
+ */
 export class FullBundleDevEnvironment extends DevEnvironment {
   private devEngine!: DevEngine
   private clients = new Clients()
@@ -78,6 +80,7 @@ export class FullBundleDevEnvironment extends DevEnvironment {
     config: ResolvedConfig,
     context: DevEnvironmentContext,
   ) {
+    // 确保环境名称 等于 'client'
     if (name !== 'client') {
       throw new Error(
         'currently full bundle mode is only available for client environment',
@@ -87,6 +90,10 @@ export class FullBundleDevEnvironment extends DevEnvironment {
     super(name, config, { ...context, disableDepsOptimizer: true })
   }
 
+  /**
+   * 监听热模块替换事件
+   * @param _server ViteDevServer 实例
+   */
   override async listen(_server: ViteDevServer): Promise<void> {
     this.hot.listen()
 
@@ -116,6 +123,7 @@ export class FullBundleDevEnvironment extends DevEnvironment {
       }
     })
 
+    // 创建开发引擎
     this.devEngine = await dev(rollupOptions, outputOptions, {
       onHmrUpdates: (result) => {
         if (result instanceof Error) {
@@ -172,6 +180,7 @@ export class FullBundleDevEnvironment extends DevEnvironment {
         skipWrite: true,
       },
     })
+    // 运行开发引擎
     debug?.('INITIAL: setup dev engine')
     this.devEngine.run().then(
       () => {
@@ -181,6 +190,7 @@ export class FullBundleDevEnvironment extends DevEnvironment {
         debug?.('INITIAL: run error', e)
       },
     )
+    // 等待初始构建完成
     this.waitForInitialBuildFinish().then(() => {
       debug?.('INITIAL: build done')
       this.hot.send({ type: 'full-reload', path: '*' })
@@ -270,8 +280,12 @@ export class FullBundleDevEnvironment extends DevEnvironment {
     return shouldTrigger
   }
 
+  /**
+   * 关闭 fullBundleEnvironment 环境并释放相关资源，确保所有资源都被正确清理
+   */
   override async close(): Promise<void> {
     this.memoryFiles.clear()
+    // 关闭父类 和 开发引擎
     await Promise.all([super.close(), this.devEngine.close()])
   }
 
@@ -309,17 +323,29 @@ export class FullBundleDevEnvironment extends DevEnvironment {
     return rolldownOptions
   }
 
+  /**
+   * 处理热模块替换 (HMR) 输出，根据不同类型的输出执行相应的操作，如页面重载或模块更新。
+   * @param client
+   * @param files 受影响的文件路径
+   * @param hmrOutput HMR 输出
+   * @param invalidateInformation 无效模块的信息，用于记录触发 HMR 的模块
+   * @returns
+   */
   private handleHmrOutput(
     client: NormalizedHotChannelClient,
     files: string[],
     hmrOutput: HmrOutput,
     invalidateInformation?: { firstInvalidatedBy: string },
   ) {
+    // 忽略 Noop 类型的输出
     if (hmrOutput.type === 'Noop') return
 
+    // 处理文件路径
     const shortFile = files
       .map((file) => getShortName(file, this.config.root))
       .join(', ')
+
+    // 处理 FullReload 类型的输出
     if (hmrOutput.type === 'FullReload') {
       const reason = hmrOutput.reason
         ? colors.dim(` (${hmrOutput.reason})`)
@@ -328,7 +354,9 @@ export class FullBundleDevEnvironment extends DevEnvironment {
         colors.green(`trigger page reload `) + colors.dim(shortFile) + reason,
         { clear: !invalidateInformation, timestamp: true },
       )
+      //获取最新的构建输出
       this.devEngine.ensureLatestBuildOutput().then(() => {
+        // 全量重载
         this.debouncedFullReload()
       })
       return
@@ -339,12 +367,14 @@ export class FullBundleDevEnvironment extends DevEnvironment {
       code: typeof hmrOutput.code === 'string' ? '[code]' : hmrOutput.code,
     })
 
+    // 更新内存文件
     this.memoryFiles.set(hmrOutput.filename, { source: hmrOutput.code })
     if (hmrOutput.sourcemapFilename && hmrOutput.sourcemap) {
       this.memoryFiles.set(hmrOutput.sourcemapFilename, {
         source: hmrOutput.sourcemap,
       })
     }
+    // 生成更新信息
     const updates: Update[] = hmrOutput.hmrBoundaries.map((boundary: any) => {
       return {
         type: 'js-update',
@@ -355,10 +385,12 @@ export class FullBundleDevEnvironment extends DevEnvironment {
         timestamp: Date.now(),
       }
     })
+    // 发送更新信息
     client.send({
       type: 'update',
       updates,
     })
+    // 打印更新新
     this.logger.info(
       colors.green(`hmr update `) +
         colors.dim([...new Set(updates.map((u) => u.path))].join(', ')),

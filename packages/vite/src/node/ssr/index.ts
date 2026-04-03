@@ -63,12 +63,22 @@ const _ssrConfigDefaults = Object.freeze({
 export const ssrConfigDefaults: Readonly<Partial<SSROptions>> =
   _ssrConfigDefaults
 
+/**
+ * 解析 SSR 配置选项
+ * @param ssr SSR 配置选项
+ * @param preserveSymlinks 是否保留符号链接的原始路径
+ * @returns 解析后的 SSR 配置选项
+ */
 export function resolveSSROptions(
   ssr: SSROptions | undefined,
   preserveSymlinks: boolean,
 ): ResolvedSSROptions {
   const defaults = mergeWithDefaults(_ssrConfigDefaults, {
-    optimizeDeps: { esbuildOptions: { preserveSymlinks } },
+    optimizeDeps: {
+      esbuildOptions: {
+        preserveSymlinks,
+      },
+    },
   } satisfies SSROptions)
   return mergeWithDefaults(defaults, ssr ?? {})
 }

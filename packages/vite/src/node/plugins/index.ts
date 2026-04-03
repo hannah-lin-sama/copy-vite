@@ -38,24 +38,40 @@ import { forwardConsolePlugin } from './forwardConsole'
 import { oxcPlugin } from './oxc'
 import { esbuildBannerFooterCompatPlugin } from './esbuildBannerFooterCompatPlugin'
 
+/**
+ * 解析插件
+ * @param config 已解析的配置
+ * @param prePlugins 预插件
+ * @param normalPlugins 预插件 normal
+ * @param postPlugins 后插件
+ * @returns 插件数组
+ */
 export async function resolvePlugins(
   config: ResolvedConfig,
   prePlugins: Plugin[],
   normalPlugins: Plugin[],
   postPlugins: Plugin[],
 ): Promise<Plugin[]> {
-  const isBuild = config.command === 'build'
-  const isBundled = config.isBundled
-  const isWorker = config.isWorker
+  const isBuild = config.command === 'build' // 是否为构建命令
+  const isBundled = config.isBundled // 是否为捆绑模式
+  const isWorker = config.isWorker // 是否为 Worker 模式
+  // 根据是否为捆绑模式，解析不同的插件
+  // 如果是捆绑模式，解析构建插件；否则，返回空数组
   const buildPlugins = isBundled
     ? await (await import('../build')).resolveBuildPlugins(config)
     : { pre: [], post: [] }
+
   const { modulePreload } = config.build
 
   return [
+    // 1、prePlugins 插件
+    // 非捆绑模式下，优化依赖项插件
     !isBundled ? optimizedDepsPlugin() : null,
+    // 非 Worker 模式下，监听包数据插件
     !isWorker ? watchPackageDataPlugin(config.packageCache) : null,
+    // 非捆绑模式下，预别名插件
     !isBundled ? preAliasPlugin(config) : null,
+    // 捆绑模式下，根据是否自定义解析器选择不同的别名插件
     isBundled && !config.resolve.alias.some((v) => v.customResolver)
       ? nativeAliasPlugin({
           entries: config.resolve.alias.map((item) => {
@@ -73,9 +89,12 @@ export async function resolvePlugins(
 
     ...prePlugins,
 
+    // 2、normalPlugins 插件
+    // 注入模块预加载 polyfill
     modulePreload !== false && modulePreload.polyfill
       ? modulePreloadPolyfillPlugin(config)
       : null,
+    // 基于 Oxc 的模块解析插件，用于处理依赖解析、外部化、优化等
     ...oxcResolvePlugin(
       {
         root: config.root,
@@ -91,40 +110,55 @@ export async function resolvePlugins(
         ? { ...config, consumer: 'client', optimizeDepsPluginNames: [] }
         : undefined,
     ),
+    // 处理 HTML 中的内联脚本和样式
     htmlInlineProxyPlugin(config),
-    cssPlugin(config),
+    cssPlugin(config), // 处理 CSS 文件（包括预处理器、CSS 模块等）
+    // 兼容 esbuild 的 banner/footer 选项
     esbuildBannerFooterCompatPlugin(config),
+    // 使用 Oxc 进行 JavaScript/TypeScript/JSX 转换，替代 esbuild
     config.oxc !== false ? oxcPlugin(config) : null,
+    // 处理 JSON 文件，支持命名导入等
     nativeJsonPlugin({ ...config.json, minify: isBuild }),
-    wasmHelperPlugin(),
-    webWorkerPlugin(config),
-    assetPlugin(config),
+    wasmHelperPlugin(), // 处理 WebAssembly 模块（.wasm）
+    webWorkerPlugin(config), // 处理 Web Worker 导入（new Worker 语法）
+    assetPlugin(config), // 处理静态资源（图片、字体等），返回 URL
     // for now client only
+    // 将浏览器控制台日志转发到服务器终端
     config.server.forwardConsole.enabled &&
       forwardConsolePlugin({ environments: ['client'] }),
 
     ...normalPlugins,
 
-    nativeWasmFallbackPlugin(),
-    definePlugin(config),
-    cssPostPlugin(config),
+    // 3、postPlugins 插件
+    nativeWasmFallbackPlugin(), // WebAssembly 回退插件
+    definePlugin(config), // 处理 define 配置，替换全局常量
+    cssPostPlugin(config), // CSS 后处理插件（如压缩、source map）
+    // 构建时处理 HTML 文件， 捆绑模式下生效
     isBundled && buildHtmlPlugin(config),
+    // 处理 Worker 中的 import.meta.url
     workerImportMetaUrlPlugin(config),
+    // 处理静态资源中的 import.meta.url
     assetImportMetaUrlPlugin(config),
+    // 构建时插件的前置部分
     ...buildPlugins.pre,
+    // 处理动态导入变量（如 import('./${name}.js')）
     dynamicImportVarsPlugin(config),
-    importGlobPlugin(config),
+    importGlobPlugin(config), // 处理 import.meta.glob 语法
 
     ...postPlugins,
 
-    ...buildPlugins.post,
+    ...buildPlugins.post, // 构建时插件的后置部分
 
     // internal server-only plugins are always applied after everything else
+    // 非捆绑模式下，注入客户端代码（如分析工具、热更新等）
     ...(isBundled
       ? []
       : [
+          // 注入 HMR 客户端代码
           clientInjectionsPlugin(config),
+          // 注入 CSS 分析插件
           cssAnalysisPlugin(config),
+          // 注入导入分析插件
           importAnalysisPlugin(config),
         ]),
   ].filter(Boolean) as Plugin[]
@@ -161,7 +195,7 @@ export function createPluginHookUtils(
  * 根据插件钩子名称排序插件
  * @param hookName 插件钩子名称
  * @param plugins 插件数组
- * @returns 
+ * @returns
  */
 export function getSortedPluginsByHook<K extends keyof Plugin>(
   hookName: K,
@@ -199,7 +233,7 @@ export function getSortedPluginsByHook<K extends keyof Plugin>(
 /**
  * 获取插件钩子函数的处理函数
  * @param hook 插件钩子函数
- * @returns 
+ * @returns
  */
 export function getHookHandler<T extends ObjectHook<Function>>(
   hook: T,

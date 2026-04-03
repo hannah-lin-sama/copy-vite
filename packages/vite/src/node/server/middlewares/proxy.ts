@@ -72,6 +72,14 @@ const rewriteOriginHeader = (
   }
 }
 
+/**
+ * 代理中间件
+ *
+ * @param httpServer HTTP 服务器实例
+ * @param options 代理选项
+ * @param config 配置对象
+ * @returns 中间件函数
+ */
 export function proxyMiddleware(
   httpServer: HttpServer | null,
   options: NonNullable<CommonServerOptions['proxy']>,

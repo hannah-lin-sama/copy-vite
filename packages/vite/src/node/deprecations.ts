@@ -51,13 +51,15 @@ export function isFutureDeprecationEnabled(
 // Later we could have a `warnDeprecation` utils when the deprecation is landed
 /**
  * Warn about future deprecations.
+ * 根据配置显示关于未来可能弃用功能的警告
  */
 export function warnFutureDeprecation(
   config: ResolvedConfig,
   type: keyof FutureOptions,
-  extraMessage?: string,
-  stacktrace = true,
+  extraMessage?: string, // 额外消息
+  stacktrace = true, // 是否显示栈跟踪
 ): void {
+  // 忽略警告或配置中未启用警告，或警告类型不是 warn 时，不显示警告
   if (
     _ignoreDeprecationWarnings ||
     !config.future ||
@@ -65,21 +67,25 @@ export function warnFutureDeprecation(
   )
     return
 
+  // 构建警告消息
   let msg = `[vite future] ${deprecationMessages[type]}`
   if (extraMessage) {
     msg += ` ${extraMessage}`
   }
   msg = colors.yellow(msg)
 
+  // 添加文档链接
   const docs = `${docsURL}/changes/${deprecationCode[type].toLowerCase()}`
   msg +=
     colors.gray(`\n  ${stacktrace ? '├' : '└'}─── `) +
     colors.underline(docs) +
     '\n'
 
+  // 添加栈跟踪
   if (stacktrace) {
     const stack = new Error().stack
     if (stack) {
+      // 过滤掉 Vite 内部栈跟踪
       let stacks = stack
         .split('\n')
         .slice(3)
@@ -93,6 +99,7 @@ export function warnFutureDeprecation(
       msg += colors.dim(stacks.join('\n')) + '\n'
     }
   }
+  // 显示警告
   config.logger.warnOnce(msg)
 }
 
