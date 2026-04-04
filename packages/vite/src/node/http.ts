@@ -124,7 +124,7 @@ export type CorsOrigin = boolean | string | RegExp | (string | RegExp)[]
 
 /**
  * 创建 HTTP 服务器
- * 
+ *
  * @param app Connect 应用
  * @param httpsOptions HTTPS 服务器选项
  * @returns HTTP 服务器
@@ -162,7 +162,7 @@ export async function resolveHttpServer(
 
 /**
  * 解析 HTTPS 服务器配置
- * 
+ *
  * @param https HTTPS 服务器选项
  * @returns 解析后的 HTTPS 服务器选项
  */
@@ -252,7 +252,7 @@ async function tryBindServer(
     httpServer.on('error', onError)
     httpServer.on('listening', onListening)
 
-    // 启动 HTTP 服务器监听指定端口号
+    // 这里是重写 listen 方法
     httpServer.listen(port, host)
   })
 }

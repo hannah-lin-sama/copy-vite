@@ -58,13 +58,15 @@ export interface DevEnvironmentContext {
  * @extends BaseEnvironment
  */
 export class DevEnvironment extends BaseEnvironment {
+  // 环境模式，固定为 'dev'
   mode = 'dev' as const
-  // 环境中模块间的依赖关系图
+  // 模块的依赖关系图
   moduleGraph: EnvironmentModuleGraph
 
+  // 依赖优化器（可选）
   depsOptimizer?: DepsOptimizer
   /**
-   * @internal
+   * @internal 远程运行器选项
    */
   _remoteRunnerOptions: DevEnvironmentContext['remoteRunner']
 
@@ -83,7 +85,7 @@ export class DevEnvironment extends BaseEnvironment {
   _pluginContainer: EnvironmentPluginContainer<DevEnvironment> | undefined
 
   /**
-   * @internal
+   * @internal 标记是否正在关闭
    */
   _closing: boolean = false
   /**
@@ -99,8 +101,7 @@ export class DevEnvironment extends BaseEnvironment {
     }
   >
   /**
-   * @internal
-   * 用于检测模块图的静态导入是否已全部处理完毕
+   * @internal 辅助检测模块依赖图爬取完成
    */
   _crawlEndFinder: CrawlEndFinder
 
@@ -135,6 +136,7 @@ export class DevEnvironment extends BaseEnvironment {
     }
     super(name, config, options)
 
+    // 2、初始化内部状态
     // 存储待处理请求
     this._pendingRequests = new Map()
 
@@ -151,7 +153,7 @@ export class DevEnvironment extends BaseEnvironment {
     // 存储远程运行器选项
     this._remoteRunnerOptions = context.remoteRunner ?? {}
 
-    // 设置热更新通道
+    // 3、设置热更新通道
     this.hot = context.transport
       ? isWebSocketServer in context.transport
         ? context.transport
@@ -160,7 +162,7 @@ export class DevEnvironment extends BaseEnvironment {
       : // 如果没有提供热更新通道，创建一个空通道
         normalizeHotChannel({}, context.hot)
 
-    // 设置热更新通道的调用处理函数
+    // 4、设置热更新通道的调用处理函数
     this.hot.setInvokeHandler({
       // 获取模块
       fetchModule: (id, importer, options) => {
@@ -176,7 +178,7 @@ export class DevEnvironment extends BaseEnvironment {
       },
     })
 
-    // 监听热更新通道的无效事件
+    // 5、监听热更新通道的无效事件
     this.hot.on(
       'vite:invalidate',
       async ({ path, message, firstInvalidatedBy }, client) => {
@@ -191,7 +193,7 @@ export class DevEnvironment extends BaseEnvironment {
       },
     )
 
-    // 初始化依赖优化器
+    // 6、初始化依赖优化器
     if (!context.disableDepsOptimizer) {
       const { optimizeDeps } = this.config
 
@@ -258,10 +260,10 @@ export class DevEnvironment extends BaseEnvironment {
   }
 
   /**
-   *
-   * @param id
-   * @param importer
-   * @param options
+   * 在当前环境上下文中获取模块
+   * @param id 要获取的模块的 ID 或路径
+   * @param importer 导入该模块的模块路径（可选）
+   * @param options 获取模块的选项（可选）
    * @returns
    */
   fetchModule(
@@ -270,6 +272,7 @@ export class DevEnvironment extends BaseEnvironment {
     options?: FetchFunctionOptions,
   ): Promise<FetchResult> {
     return fetchModule(this, id, importer, {
+      // 环境的远程运行器选项
       ...this._remoteRunnerOptions,
       ...options,
     })

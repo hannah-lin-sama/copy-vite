@@ -229,13 +229,20 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
 
   let _env: string | undefined
   let _ssrEnv: string | undefined
+
+  // 生成环境变量的注入代码
   function getEnv(ssr: boolean) {
     if (!_ssrEnv || !_env) {
       const importMetaEnvKeys: Record<string, any> = {}
       const userDefineEnv: Record<string, any> = {}
+
+      // 收集 vite 环境变量
+      // 遍历 config.env，将所有环境变量转换为字符串形式
       for (const key in config.env) {
         importMetaEnvKeys[key] = JSON.stringify(config.env[key])
       }
+      // 收集用户定义的环境变量
+      // 遍历 config.define，将所有用户定义的环境变量转换为字符串形式
       for (const key in config.define) {
         // non-import.meta.env.* is handled in `clientInjection` plugin
         if (key.startsWith('import.meta.env.')) {
@@ -243,10 +250,14 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         }
       }
       const env = `import.meta.env = ${serializeDefine({
+        // vite 环境变量
         ...importMetaEnvKeys,
+        // SSR 标志
         SSR: '__vite_ssr__',
+        // 用户定义的环境变量
         ...userDefineEnv,
       })};`
+      // 替换 SSR 标志为 true，生成 SSR 环境的环境变量注入代码
       _ssrEnv = env.replace('__vite_ssr__', 'true')
       _env = env.replace('__vite_ssr__', 'false')
     }
@@ -257,21 +268,37 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
     name: 'vite:import-analysis',
 
     async transform(source, importer) {
+      // 环境获取
       const environment = this.environment as DevEnvironment
+      // ssr 检测
       const ssr = environment.config.consumer === 'server'
+      // 模块图
       const moduleGraph = environment.moduleGraph
 
+      // 跳过分析
+      // 跳过条件可能包括：
+      // 模块已经分析过、模块不在需要处理的范围内（如 node_modules 中的某些文件）、或者该模块不需要进行导入重写等
       if (canSkipImportAnalysis(importer)) {
         debug?.(colors.dim(`[skipped] ${prettifyUrl(importer, root)}`))
         return null
       }
 
-      const msAtStart = debug ? performance.now() : 0
+      const msAtStart = debug ? performance.now() : 0 // 记录当前高精度时间戳
+
+      // 确保 es-module-lexer 的 WebAssembly 模块已经初始化完成
+      // init 是一个 Promise，等待其完成后，parseImports 函数才能被调用
       await init
+      // 导入说明符
       let imports!: readonly ImportSpecifier[]
+      // 导出说明符
       let exports!: readonly ExportSpecifier[]
+      // 移除源代码开头的 UTF-8 BOM（字节顺序标记）字符（\uFEFF）
+      // 因为 es-module-lexer 不能正确处理 BOM
       source = stripBomTag(source)
+
+      // 解析导入
       try {
+        // 快速解析源码中的 import 和 export 语句
         ;[imports, exports] = parseImports(source)
       } catch (_e: unknown) {
         const e = _e as EsModuleLexerParseError
@@ -282,10 +309,12 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         this.error(message, showCodeFrame ? e.idx : undefined)
       }
 
+      // 依赖优化器
       const depsOptimizer = environment.depsOptimizer
 
       // since we are already in the transform phase of the importer, it must
       // have been loaded so its entry is guaranteed in the module graph.
+      // 获取导入模块
       const importerModule = moduleGraph.getModuleById(importer)
       if (!importerModule) {
         // This request is no longer valid. It could happen for optimized deps
@@ -295,10 +324,12 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         throwOutdatedRequest(importer)
       }
 
+      // 无导入检查：检查模块是否没有导入语句
       if (
         !imports.length &&
         !(this as unknown as TransformPluginContext)._addedImports
       ) {
+        // 模块信息更新
         const prunedImports = await moduleGraph.updateModuleInfo(
           importerModule,
           new Set(),
@@ -307,6 +338,8 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
           null,
           false,
         )
+
+        // 处理修剪模块
         if (prunedImports) {
           handlePrunedModules(prunedImports, environment)
         }
@@ -315,11 +348,14 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
             `[no imports] ${prettifyUrl(importer, root)}`,
           )}`,
         )
+        // 如果没有导入，直接返回原始源码
         return source
       }
 
+      // 标记是否使用了热模块替换
       let hasHMR = false
       let isSelfAccepting = false
+      // 标记是否使用了环境变量
       let hasEnv = false
       let needQueryInjectHelper = false
       let s: MagicString | undefined
@@ -329,6 +365,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         ? new Map<string, Set<string>>()
         : null
 
+      // 路径规范化
       const normalizeUrl = async (
         url: string,
         pos: number,
@@ -455,27 +492,34 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         return _isNodeModeResult
       }
 
+      // 并行处理所有导入语句
       await Promise.all(
         imports.map(async (importSpecifier, index) => {
+          // 提取导入语句的相关信息
           const {
             s: start,
             e: end,
             ss: expStart,
             se: expEnd,
+            // 如果是动态导入 import()，其位置索引；否则 -1
             d: dynamicIndex,
+            // 导入属性（assert/with）的起始位置
             a: attributeIndex,
           } = importSpecifier
 
           // #2083 User may use escape path,
           // so use imports[index].n to get the unescaped string
+          // 已解码的模块路径字符串
           let specifier = importSpecifier.n
 
+          // 源码中原始的字符串片段（可能包含转义序列）
           const rawUrl = source.slice(start, end)
 
           // check import.meta usage
           if (rawUrl === 'import.meta') {
             const prop = source.slice(end, end + 4)
             if (prop === '.hot') {
+              // 标记模块需要 HMR
               hasHMR = true
               const endHot = end + 4 + (source[end + 4] === '?' ? 1 : 0)
               if (source.slice(endHot, endHot + 7) === '.accept') {
@@ -507,6 +551,8 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
               hasEnv = true
             }
             return
+
+            // 处理动态导入中的模板字符串
           } else if (templateLiteralRE.test(rawUrl)) {
             // If the import has backticks but isn't transformed as a glob import
             // (as there's nothing to glob), check if it's simply a plain string.
@@ -521,13 +567,16 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
 
           // strip import attributes as we can process them ourselves
           if (!isDynamicImport && attributeIndex > -1) {
+            // 移除导入属性（import attributes）
             str().remove(end + 1, expEnd)
           }
 
           // static import or valid string in dynamic import
           // If resolvable, let's resolve it
+          // 跳过不需要处理的导入
           if (specifier !== undefined) {
             // skip external / data uri
+            // 跳过外部 URL 和数据 URL
             if (
               ((isExternalUrl(specifier) && !specifier.startsWith('file://')) ||
                 isDataUrl(specifier)) &&
@@ -536,6 +585,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
               return
             }
             // skip ssr externals and builtins
+            // SSR 环境：需要外部化的模块或 Node.js 内置模块，也跳过
             if (ssr && !matchAlias(specifier)) {
               if (shouldExternalize(environment, specifier, importer)) {
                 return
@@ -545,11 +595,13 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
               }
             }
             // skip client
+            // 特殊的客户端公共路径（如 /@vite/client）也跳过
             if (specifier === clientPublicPath) {
               return
             }
 
             // warn imports to non-asset /public files
+            // 检查 /public 下的非法导入
             if (
               specifier[0] === '/' &&
               !(
@@ -570,6 +622,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
             }
 
             // normalize
+            // 规范化 URL 并解析
             let [url, resolvedId] = await normalizeUrl(specifier, start)
             resolvedId = resolvedId || url
 
@@ -578,6 +631,8 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
             // See https://github.com/vitejs/vite/issues/9438#issuecomment-1465270409
             config.safeModulePaths.add(fsPathFromUrl(stripBase(url, base)))
 
+            // 重写导入语句
+            // 解析后的 url 与原始 specifier 不同，则需要重写源代码
             if (url !== specifier) {
               let rewriteDone = false
               if (
@@ -634,6 +689,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
                 url.startsWith(wrapId(browserExternalId)) &&
                 source.slice(expStart, start).includes('{')
               ) {
+                // 调用 interopNamedImports 注入辅助代码
                 interopNamedImports(
                   str(),
                   importSpecifier,
@@ -649,6 +705,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
                 const rewrittenUrl = JSON.stringify(url)
                 const s = isDynamicImport ? start : start - 1
                 const e = isDynamicImport ? end : end + 1
+                // 将原始路径替换为解析后的 URL
                 str().overwrite(s, e, rewrittenUrl, {
                   contentOnly: true,
                 })
@@ -657,12 +714,14 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
 
             // record for HMR import chain analysis
             // make sure to unwrap and normalize away base
+            // 记录 HMR 依赖
             const hmrUrl = unwrapId(stripBase(url, base))
             const isLocalImport = !isExternalUrl(hmrUrl) && !isDataUrl(hmrUrl)
             if (isLocalImport) {
               orderedImportedUrls[index] = hmrUrl
             }
 
+            // 提取导入的绑定（用于 HMR 部分接受）
             if (enablePartialAccept && importedBindings) {
               extractImportedBindings(
                 resolvedId,
@@ -672,6 +731,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
               )
             }
 
+            // 预热已知的直接导入
             if (
               !isDynamicImport &&
               isLocalImport &&
@@ -681,8 +741,11 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
               // These requests will also be registered in transformRequest to be awaited
               // by the deps optimizer
               const url = removeImportQuery(hmrUrl)
+              // 提前调用 warmupRequest 触发编译，减少首次请求的延迟
               environment.warmupRequest(url)
             }
+
+            // 处理无法分析的动态导入
           } else if (!importer.startsWith(withTrailingSlash(clientDir))) {
             if (!isInNodeModules(importer)) {
               // check @vite-ignore which suppresses dynamic import warning
@@ -690,6 +753,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
                 // complete expression inside parens
                 source.slice(dynamicIndex + 1, end),
               )
+              // 没有 /* @vite-ignore */ 注释，则发出警告
               if (!hasViteIgnore) {
                 this.warn(
                   `\n` +
@@ -748,6 +812,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         str().prepend(getEnv(ssr))
       }
 
+      // HMR 上下文注入
       if (hasHMR && !ssr && !isClassicWorker) {
         debugHmr?.(
           `${
@@ -812,6 +877,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
       // node CSS imports does its own graph update in the css-analysis plugin so we
       // only handle js graph updates here.
       // note that we want to handle .css?raw and .css?url here
+      // 模块图更新
       if (!isCSSRequest(importer) || SPECIAL_QUERY_RE.test(importer)) {
         // attached by pluginContainer.addWatchFile
         const pluginImports = (this as unknown as TransformPluginContext)

@@ -610,7 +610,7 @@ export async function _createServer(
   }
 
   // 4、文件系统监听
-   
+
   // 检查是否启用文件监视
   const watchEnabled = serverConfig.watch !== null
   // 文件监视器实例化
@@ -826,6 +826,7 @@ export async function _createServer(
       // 解析主机名
       const hostname = await resolveHostname(config.server.host)
       if (httpServer) {
+        // 把监听器添加到事件队列的最前面，让它优先执行
         httpServer.prependListener('listening', () => {
           // 解析服务器监听的 URL 地址
           server.resolvedUrls = resolveServerUrls(
@@ -1252,6 +1253,7 @@ export async function _createServer(
 
     initingServer = (async function () {
       // 如果没有配置 bundledDev,则在初始化服务器时调用 buildStart 方法
+      // 向下兼容旧版本的行为
       if (!config.experimental.bundledDev) {
         // For backward compatibility, we call buildStart for the client
         // environment when initing the server. For other environments
@@ -1385,6 +1387,7 @@ export function createServerCloseFn(
     })
 }
 
+// 将目录路径相对于根目录解析为绝对路径，并进行规范化处理
 function resolvedAllowDir(root: string, dir: string): string {
   return normalizePath(path.resolve(root, dir))
 }
@@ -1423,11 +1426,19 @@ const _serverConfigDefaults = Object.freeze({
 export const serverConfigDefaults: Readonly<Partial<ServerOptions>> =
   _serverConfigDefaults
 
+/**
+ * 解析和处理服务器配置选项，将原始配置转换为最终的解析配置
+ * @param root 根目录
+ * @param raw  // 原始服务器配置选项
+ * @param logger
+ * @returns
+ */
 export async function resolveServerOptions(
   root: string,
   raw: ServerOptions | undefined,
   logger: Logger,
 ): Promise<ResolvedServerOptions> {
+  // 合并默认配置和原始配置
   const _server = mergeWithDefaults(
     {
       ..._serverConfigDefaults,
@@ -1444,15 +1455,18 @@ export async function resolveServerOptions(
       // run searchForWorkspaceRoot only if needed
       allow: raw?.fs?.allow ?? [searchForWorkspaceRoot(root)],
     },
+    // 源码映射忽略列表
     sourcemapIgnoreList:
       _server.sourcemapIgnoreList === false
         ? () => false
         : _server.sourcemapIgnoreList,
+    // 控制台转发
     forwardConsole: await resolveForwardConsoleOptions(_server.forwardConsole),
   }
 
   let allowDirs = server.fs.allow
 
+  // Yarn PnP 环境处理
   if (process.versions.pnp) {
     // running a command fails if cwd doesn't exist and root may not exist
     // search for package root to find a path that exists
@@ -1476,6 +1490,7 @@ export async function resolveServerOptions(
     }
   }
 
+  // 目录规范化处理
   allowDirs = allowDirs.map((i) => resolvedAllowDir(root, i))
 
   // only push client dir when vite itself is outside-of-root
@@ -1486,8 +1501,11 @@ export async function resolveServerOptions(
 
   server.fs.allow = allowDirs
 
+  // 处理 origin 选项
   if (server.origin?.endsWith('/')) {
+    // 移除 origin 结尾的斜杠
     server.origin = server.origin.slice(0, -1)
+    // 以 / 结尾，发出警告
     logger.warn(
       colors.yellow(
         `${colors.bold('(!)')} server.origin should not end with "/". Using "${
@@ -1502,6 +1520,7 @@ export async function resolveServerOptions(
     Array.isArray(server.allowedHosts)
   ) {
     const additionalHost = process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+    // 合并额外的允许主机
     server.allowedHosts = [...server.allowedHosts, additionalHost]
   }
 

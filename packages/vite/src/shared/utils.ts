@@ -24,6 +24,7 @@ export function unwrapId(id: string): string {
 }
 
 const windowsSlashRE = /\\/g
+
 export function slash(p: string): string {
   return p.replace(windowsSlashRE, '/')
 }
@@ -33,7 +34,7 @@ const postfixRE = /[?#].*$/
 /**
  * 清理 URL，移除查询参数和哈希值
  * @param url URL 字符串
- * @returns 
+ * @returns
  */
 export function cleanUrl(url: string): string {
   return url.replace(postfixRE, '')

@@ -95,7 +95,7 @@ export function loadEnv(
 }
 
 /**
- * 解析环境变量前缀
+ * 用于处理和验证 Vite 配置中的环境变量前缀，确保前缀配置的有效性和安全性。
  * @param param0 配置对象
  * @param param0.envPrefix 环境变量前缀数组
  * @returns
@@ -103,15 +103,17 @@ export function loadEnv(
 export function resolveEnvPrefix({
   envPrefix = 'VITE_', // 默认前缀为 VITE_
 }: UserConfig): string[] {
-  // 确保 envPrefix 是一个数组
+  // 标准化为数组格式，确保 envPrefix 是一个数组，即使传入的是单个字符串或空字符串
   envPrefix = arraify(envPrefix)
-  // 检查 envPrefix 是否包含空字符串
+  // 如果包含空字符串，抛出错误，提示可能导致敏感信息意外暴露
+  // 原因：空字符串前缀会匹配所有环境变量，包括可能包含敏感信息的系统环境变量
   if (envPrefix.includes('')) {
     throw new Error(
       `envPrefix option contains value '', which could lead unexpected exposure of sensitive information.`,
     )
   }
-  // 检查 envPrefix 是否包含包含空格的字符串
+  // 如果包含包含空格的字符串，输出黄色警告，提示空格在实际使用中无效
+  // 原因：环境变量名通常不包含空格，带空格的前缀无法匹配实际环境变量
   if (envPrefix.some((prefix) => /\s/.test(prefix))) {
     // eslint-disable-next-line no-console
     console.warn(

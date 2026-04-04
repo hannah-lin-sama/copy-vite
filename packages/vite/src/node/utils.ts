@@ -759,11 +759,19 @@ function optimizeSafeRealPathSync() {
   })
 }
 
+/**
+ * 确保文件被监听
+ * @param watcher 文件监听器实例
+ * @param file 文件路径
+ * @param root 项目根目录
+ */
 export function ensureWatchedFile(
   watcher: FSWatcher,
   file: string | null,
   root: string,
 ): void {
+  // 文件路径不为空
+  // 文件路径在项
   if (
     file &&
     // only need to watch if out of root
@@ -1588,6 +1596,8 @@ export async function asyncFlatten<T extends unknown[]>(
 }
 
 // strip UTF-8 BOM
+// UTF-8 BOM（字节顺序标记）是位于文本文件开头的特殊字节序列 EF BB BF，用于标识文件采用 UTF-8 编码。
+// 虽然 UTF-8 不需要 BOM 指示字节序，但某些编辑器（如 Windows 记事本）会自动添加它。
 export function stripBomTag(content: string): string {
   if (content.charCodeAt(0) === 0xfeff) {
     return content.slice(1)

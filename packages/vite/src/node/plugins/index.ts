@@ -164,24 +164,39 @@ export async function resolvePlugins(
   ].filter(Boolean) as Plugin[]
 }
 
+/**
+ * 创建插件钩子工具对象，为插件系统提供钩子排序和管理功能
+ * @param plugins
+ * @returns
+ */
 export function createPluginHookUtils(
   plugins: readonly Plugin[],
 ): PluginHookUtils {
   // sort plugins per hook
+  //
   const sortedPluginsCache = new Map<keyof Plugin, Plugin[]>()
+
   function getSortedPlugins<K extends keyof Plugin>(
     hookName: K,
   ): PluginWithRequiredHook<K>[] {
+    // 如果缓存存在，直接返回缓存的结果
     if (sortedPluginsCache.has(hookName))
       return sortedPluginsCache.get(hookName) as PluginWithRequiredHook<K>[]
+
+    // 插件排序
     const sorted = getSortedPluginsByHook(hookName, plugins)
+    // 缓存
     sortedPluginsCache.set(hookName, sorted)
     return sorted
   }
+
   function getSortedPluginHooks<K extends keyof Plugin>(
     hookName: K,
   ): NonNullable<HookHandler<Plugin[K]>>[] {
+    // 获取排序好的插件数组
     const plugins = getSortedPlugins(hookName)
+
+    // 过滤出有钩子函数的插件
     return plugins.map((p) => getHookHandler(p[hookName])).filter(Boolean)
   }
 
@@ -248,33 +263,47 @@ type FilterForPluginValue = {
 }
 const filterForPlugin = new WeakMap<Plugin, FilterForPluginValue>()
 
+/**
+ * 用于获取插件指定钩子的缓存过滤器。
+ * 它为插件的 resolveId、load 和 transform 钩子提供缓存的过滤器，避免重复计算，提高性能
+ * @param plugin
+ * @param hookName
+ * @returns
+ */
 export function getCachedFilterForPlugin<
   H extends 'resolveId' | 'load' | 'transform',
 >(plugin: Plugin, hookName: H): FilterForPluginValue[H] | undefined {
+  // 缓存命中：如果缓存存在且包含指定钩子的过滤器，直接返回
   let filters = filterForPlugin.get(plugin)
   if (filters && hookName in filters) {
     return filters[hookName]
   }
 
+  // 缓存不存在：如果插件还没有过滤器缓存，创建一个空对象
   if (!filters) {
     filters = {}
     filterForPlugin.set(plugin, filters)
   }
 
   let filter: PluginFilter | TransformHookFilter | undefined
+
+  // 根据钩子类型创建过滤器
   switch (hookName) {
+    // resolveId：提取 id 过滤器，创建 ID 过滤器
     case 'resolveId': {
       const rawFilter = extractFilter(plugin.resolveId)?.id
       filters.resolveId = createIdFilter(rawFilter)
       filter = filters.resolveId
       break
     }
+    // load：提取 id 过滤器，创建 ID 过滤器
     case 'load': {
       const rawFilter = extractFilter(plugin.load)?.id
       filters.load = createIdFilter(rawFilter)
       filter = filters.load
       break
     }
+    // transform：提取 id、code 和 moduleType 过滤器，创建转换过滤器
     case 'transform': {
       const rawFilters = extractFilter(plugin.transform)
       filters.transform = createFilterForTransform(
@@ -289,6 +318,12 @@ export function getCachedFilterForPlugin<
   return filter as FilterForPluginValue[H] | undefined
 }
 
+/**
+ * 用于从插件钩子对象中提取过滤器。
+ * 它检查钩子对象是否包含有效的过滤器，并在条件满足时返回该过滤器。
+ * @param hook 插件钩子对象
+ * @returns 过滤器函数或 undefined
+ */
 function extractFilter<T extends Function, F>(
   hook: ObjectHook<T, { filter?: F }> | undefined,
 ) {

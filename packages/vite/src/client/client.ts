@@ -182,11 +182,19 @@ const hmrClient = new HMRClient(
         isWithinCircularImport, // 是否在循环依赖里
       }) {
         // 加载新代码，并通知 Rolldown 运行时更新模块
+        // import(base + url!) 浏览器原生 ESM 动态导入
+        // 浏览器发起网络请求 → 访问 Vite 开发服务器
+        // url 已带时间戳 → 强制不缓存，加载最新版
         const importPromise = import(base + url!).then(() =>
           // @ts-expect-error globalThis.__rolldown_runtime__
+          // 全局运行时.loadExports
+          // __rolldown_runtime__：Rolldown 运行时（Vite 新一代底层打包 / 运行核心）
+          // loadExports(acceptedPath)
+          // → 告诉运行时：重新收集这个模块的最新导出
+          // → 运行时会自动更新所有引用该模块的地方
           globalThis.__rolldown_runtime__.loadExports(acceptedPath),
         )
-        //  循环依赖容错
+        // 循环依赖容错
         if (isWithinCircularImport) {
           // 热更失败 → 自动刷新页面
           importPromise.catch(() => {
@@ -210,15 +218,17 @@ const hmrClient = new HMRClient(
         // 拆分路径
         const [acceptedPathWithoutQuery, query] = acceptedPath.split(`?`)
         const importPromise = import(
-          /* @vite-ignore */ // 告诉 vite 不解析这个动态导入
+          /* @vite-ignore */ // 告诉 vite 不解析这个动态导入，由浏览器负责加载
           base +
+            // 移除前导斜杠，确保路径正确
             acceptedPathWithoutQuery.slice(1) +
+            // timestamp 用于刷新浏览器缓存，确保加载最新代码
             `?${explicitImportRequired ? 'import&' : ''}t=${timestamp}${
               query ? `&${query}` : ''
             }`
         )
         if (isWithinCircularImport) {
-          // 热更失败 → 自动刷新页面
+          // 循环依赖， 热更失败 → 自动刷新页面
           importPromise.catch(() => {
             console.info(
               `[hmr] ${acceptedPath} failed to apply HMR as it's within a circular import. Reloading page to reset the execution order. ` +
@@ -311,6 +321,10 @@ async function handleMessage(payload: HotPayload) {
           // directly, as the new stylesheet has not yet been loaded.
           return new Promise((resolve) => {
             // 克隆新 link 标签，不直接改旧 href
+            // 原因？直接改 href 会出现短暂闪烁（FOUC）
+            // 1、旧样式被移除
+            // 2、新样式还没加载完
+            // 3、页面瞬间无样式 → 闪烁
             const newLinkTag = el.cloneNode() as HTMLLinkElement
             newLinkTag.href = new URL(newPath, el.href).href
             const removeOldEl = () => {
@@ -675,37 +689,58 @@ if ('document' in globalThis) {
 // because after build it will be a single css file
 let lastInsertedStyle: HTMLStyleElement | undefined
 
+/**
+ * 用于在浏览器中动态更新或创建样式元素。
+ * 它是 Vite 热模块替换 (HMR) 系统的重要组成部分，专门用于处理 CSS 模块的热更新。
+ * @param id
+ * @param content
+ * @returns
+ */
 export function updateStyle(id: string, content: string): void {
   if (linkSheetsMap.has(id)) return
 
   let style = sheetsMap.get(id)
   if (!style) {
+    // 如果不存在，创建新的 <style> 标签
     style = document.createElement('style')
+    // 设置 type 属性为 text/css
     style.setAttribute('type', 'text/css')
+    // 设置 data-vite-dev-id 属性为模块ID
     style.setAttribute('data-vite-dev-id', id)
+    // 设置文本内容为新样式
     style.textContent = content
+    // 如果存在 cspNonce，添加 nonce 属性（用于内容安全策略）
     if (cspNonce) {
       style.setAttribute('nonce', cspNonce)
     }
 
+    // 如果 lastInsertedStyle 不存在（首次插入），将样式元素添加到 <head> 中
     if (!lastInsertedStyle) {
       document.head.appendChild(style)
 
       // reset lastInsertedStyle after async
       // because dynamically imported css will be split into a different file
       setTimeout(() => {
+        // 重置 lastInsertedStyle，以处理动态导入的 CSS
         lastInsertedStyle = undefined
       }, 0)
     } else {
+      // 将新样式元素插入到其后面
       lastInsertedStyle.insertAdjacentElement('afterend', style)
     }
+    // 更新 lastInsertedStyle 为当前样式元素
     lastInsertedStyle = style
   } else {
+    // 直接更新现有样式元素的内容
     style.textContent = content
   }
   sheetsMap.set(id, style)
 }
 
+/**
+ * 移除样式
+ * @param id
+ */
 export function removeStyle(id: string): void {
   if (linkSheetsMap.has(id)) {
     // re-select elements since HMR can replace links
@@ -727,7 +762,15 @@ export function removeStyle(id: string): void {
   }
 }
 
+/**
+ * 创建热更新上下文，为指定模块创建热更新上下文
+ * @param ownerPath 模块的所有者路径
+ * @returns 热更新上下文实例
+ */
 export function createHotContext(ownerPath: string): ViteHotContext {
+  // 创建 HMRContext 实例
+  // hmrClient 是 HMR 客户端实例，用于与 HMR 服务器通信
+  // ownerPath 是模块的所有者路径，用于标识模块
   return new HMRContext(hmrClient, ownerPath)
 }
 
