@@ -228,6 +228,11 @@ export const isCaseInsensitiveFS: boolean = testCaseInsensitiveFS()
 
 const VOLUME_RE = /^[A-Z]:/i
 
+/**
+ * 用于规范化路径字符串，确保在不同操作系统上返回一致的 POSIX 风格路径
+ * @param id 路径字符串
+ * @returns 规范化后的路径字符串
+ */
 export function normalizePath(id: string): string {
   return path.posix.normalize(isWindows ? slash(id) : id)
 }

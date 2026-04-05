@@ -236,6 +236,11 @@ function getResolveCacheKey(key: string, options: InternalResolveOptions) {
   ].join('|')
 }
 
+/**
+ * 用于查找最近的 node_modules 目录。
+ * @param basedir 基础目录
+ * @returns 最近的 node_modules 目录路径，或 null 如果未找到
+ */
 export function findNearestNodeModules(basedir: string): string | null {
   while (basedir) {
     const pkgPath = path.join(basedir, 'node_modules')

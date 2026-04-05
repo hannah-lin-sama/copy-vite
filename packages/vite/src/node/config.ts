@@ -2512,16 +2512,21 @@ async function runnerImportConfigFile(resolvedPath: string) {
 }
 
 /**
- * 构建配置文件
+ * 用于打包并加载 Vite 配置文件。
+ * 它处理配置文件的模块格式判断、打包和加载过程，确保配置文件能够被正确解析和执行。
  * @param resolvedPath 配置文件路径
  * @returns
  */
 async function bundleAndLoadConfigFile(resolvedPath: string) {
+  // 检查是否为 ESM 模块
   const isESM =
+    // 在 Deno 环境中运行
     typeof process.versions.deno === 'string' || isFilePathESM(resolvedPath)
 
-  //
+  // 配置文件打包
+  // 打包过程会处理配置文件的依赖，将其转换为可执行的代码
   const bundled = await bundleConfigFile(resolvedPath, isESM)
+  // 配置加载
   const userConfig = await loadConfigFromBundledFile(
     resolvedPath,
     bundled.code,
@@ -2529,13 +2534,16 @@ async function bundleAndLoadConfigFile(resolvedPath: string) {
   )
 
   return {
+    // 加载的用户配置
     configExport: userConfig,
+    // 配置文件的依赖项
     dependencies: bundled.dependencies,
   }
 }
 
 /**
- * 构建配置文件
+ * 用于打包 Vite 配置文件。
+ * 它使用 Rolldown（Vite 的打包工具）将配置文件及其依赖打包成一个单一的可执行文件，并处理模块环境变量和外部依赖
  * @param fileName 配置文件路径
  * @param isESM 是否为 ESM 文件
  * @returns
@@ -2544,24 +2552,31 @@ async function bundleConfigFile(
   fileName: string,
   isESM: boolean,
 ): Promise<{ code: string; dependencies: string[] }> {
+  // 标记是否已注册 import.meta 解析器
   let importMetaResolverRegistered = false
 
+  // 配置文件所在目录
   const root = path.dirname(fileName)
+  // 注入变量名称
+  // 注入 __dirname、__filename 等 CommonJS 环境变量
   const dirnameVarName = '__vite_injected_original_dirname'
   const filenameVarName = '__vite_injected_original_filename'
+  // 注入 import.meta 相关变量，确保 ESM 模块的兼容性
   const importMetaUrlVarName = '__vite_injected_original_import_meta_url'
+  // 处理 import.meta.resolve 的使用，根据模块格式提供不同的实现
   const importMetaResolveVarName =
     '__vite_injected_original_import_meta_resolve'
   const importMetaResolveRegex = /import\.meta\s*\.\s*resolve/
 
-  //
+  // 调用 Rolldown 打包配置文件
   const bundle = await rolldown({
-    input: fileName,
+    input: fileName, // 输入文件路径
     // target: [`node${process.versions.node}`],
-    platform: 'node',
+    platform: 'node', // 目标平台
     resolve: {
-      mainFields: ['main'],
+      mainFields: ['main'], // 主字段
     },
+    // 定义全局替换
     transform: {
       define: {
         __dirname: dirnameVarName,
@@ -2574,9 +2589,11 @@ async function bundleConfigFile(
       },
     },
     // disable treeshake to include files that is not sideeffectful to `moduleIds`
+    // 设置为 false，确保所有模块都被包含
     treeshake: false,
     // disable tsconfig as it's confusing to respect tsconfig options in the config file
     // this also aligns with other config loader behaviors
+    // 设置为 false，不使用 tsconfig 配置
     tsconfig: false,
     plugins: [
       {
@@ -2678,53 +2695,80 @@ async function bundleConfigFile(
       },
     ],
   })
+
+  // 生成打包结果
   const result = await bundle.generate({
+    // 根据 isESM 决定生成 ESM 还是 CJS 格式
     format: isESM ? 'esm' : 'cjs',
-    sourcemap: 'inline',
+    sourcemap: 'inline', // 设置为 'inline'，生成内联源码映射
+    // 转换源码映射中的路径
     sourcemapPathTransform(relative) {
       return path.resolve(fileName, relative)
     },
     // we want to generate a single chunk like esbuild does with `splitting: false`
+    // 设置为 false，生成单个 chunk
     codeSplitting: false,
   })
+
+  // 关闭打包器
   await bundle.close()
 
+  // 找到入口块
   const entryChunk = result.output.find(
     (chunk): chunk is OutputChunk => chunk.type === 'chunk' && chunk.isEntry,
   )!
+  // 收集所有chunk
   const bundleChunks = Object.fromEntries(
     result.output.flatMap((c) => (c.type === 'chunk' ? [[c.fileName, c]] : [])),
   )
 
   const allModules = new Set<string>()
+  // 收集所有模块
   collectAllModules(bundleChunks, entryChunk.fileName, allModules)
 
   return {
     code: entryChunk.code,
     // exclude `\x00rolldown/runtime.js`
+    // 去除虚拟模块
     dependencies: [...allModules].filter((m) => !m.startsWith('\0')),
   }
 }
 
+/**
+ * 用于收集打包配置文件时的所有模块依赖。
+ * 它通过递归遍历 chunk 间的依赖关系，确保所有相关模块都被正确收集，同时避免循环引用导致的无限递归。
+ * @param bundle
+ * @param fileName
+ * @param allModules
+ * @param analyzedModules
+ * @returns
+ */
 function collectAllModules(
   bundle: Record<string, OutputChunk>,
   fileName: string,
   allModules: Set<string>,
   analyzedModules = new Set<string>(),
 ) {
+  // 检查当前文件是否已被分析过，避免无限递归
   if (analyzedModules.has(fileName)) return
   analyzedModules.add(fileName)
 
+  // 获取当前文件的 chunk 实例
   const chunk = bundle[fileName]!
+  // 收集当前 chunk 中的所有模块
   for (const mod of chunk.moduleIds) {
     allModules.add(mod)
   }
+  // 遍历 chunk 的所有静态导入
   for (const i of chunk.imports) {
     analyzedModules.add(i)
+    // 递归收集导入模块的依赖
     collectAllModules(bundle, i, allModules, analyzedModules)
   }
+  // 遍历 chunk 的所有动态导入
   for (const i of chunk.dynamicImports) {
     analyzedModules.add(i)
+    // 递归收集动态导入模块的依赖
     collectAllModules(bundle, i, allModules, analyzedModules)
   }
 }
@@ -2733,7 +2777,17 @@ interface NodeModuleWithCompile extends NodeModule {
   _compile(code: string, filename: string): any
 }
 
+// 创建一个 Node.js 样准的 require 函数，用于加载模块
 const _require = createRequire(/** #__KEEP__ */ import.meta.url)
+
+/**
+ * 用于从打包后的代码加载 Vite 配置。
+ * 它根据模块类型（ESM 或 CommonJS）采用不同的加载策略，确保配置文件能够被正确执行并返回配置对象
+ * @param fileName  文件路径
+ * @param bundledCode 打包转换后代码
+ * @param isESM 是否为 ESM 格式
+ * @returns
+ */
 async function loadConfigFromBundledFile(
   fileName: string,
   bundledCode: string,
@@ -2746,12 +2800,16 @@ async function loadConfigFromBundledFile(
     // Storing the bundled file in node_modules/ is avoided for Deno
     // because Deno only supports Node.js style modules under node_modules/
     // and configs with `npm:` import statements will fail when executed.
+    // 查找最近的 node_modules 目录
     let nodeModulesDir =
       typeof process.versions.deno === 'string'
         ? undefined
         : findNearestNodeModules(path.dirname(fileName))
+
     if (nodeModulesDir) {
       try {
+        // 创建临时目录
+        // node_modules/.vite-temp/
         await fsp.mkdir(path.resolve(nodeModulesDir, '.vite-temp/'), {
           recursive: true,
         })
@@ -2764,15 +2822,26 @@ async function loadConfigFromBundledFile(
         }
       }
     }
+    // 生成 hash 值
     const hash = `timestamp-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    // 生成临时文件名
     const tempFileName = nodeModulesDir
       ? path.resolve(
           nodeModulesDir,
           `.vite-temp/${path.basename(fileName)}.${hash}.mjs`,
         )
       : `${fileName}.${hash}.mjs`
+    // 写入临时文件
     await fsp.writeFile(tempFileName, bundledCode)
     try {
+      // 将文件系统路径转换为 file:// 协议的 URL 对象
+      // 原因：ESM 的 import() 语法要求模块标识符为 URL 格式（对于本地文件），不能直接使用文件系统路径
+      // 动态加载 ESM 格式配置文件
+      // 执行过程：
+      // 1、Node.js 读取并执行 tempFileName 指向的文件
+      // 2、执行文件中的代码，构建模块的导出
+      // 3、生成包含所有导出的模块命名空间对象
+      // 4、Promise 解析为该命名空间对象
       return (await import(pathToFileURL(tempFileName).href)).default
     } finally {
       fs.unlink(tempFileName, () => {}) // Ignore errors
@@ -2780,24 +2849,35 @@ async function loadConfigFromBundledFile(
   }
   // for cjs, we can register a custom loader via `_require.extensions`
   else {
+    // 获取文件扩展名
     const extension = path.extname(fileName)
     // We don't use fsp.realpath() here because it has the same behaviour as
     // fs.realpath.native. On some Windows systems, it returns uppercase volume
     // letters (e.g. "C:\") while the Node.js loader uses lowercase volume letters.
     // See https://github.com/vitejs/vite/issues/12923
+    // 获取文件的真实路径
+    // 避免 Windows 系统上的路径大小写问题
     const realFileName = await promisifiedRealpath(fileName)
+    // 确定加载器扩展名
+    // require.extensions 标记已废弃
     const loaderExt = extension in _require.extensions ? extension : '.js'
     const defaultLoader = _require.extensions[loaderExt]!
+    // 注册自定义加载器
     _require.extensions[loaderExt] = (module: NodeModule, filename: string) => {
       if (filename === realFileName) {
+        // 执行打包后的代码
         ;(module as NodeModuleWithCompile)._compile(bundledCode, filename)
       } else {
+        // 使用默认加载器
         defaultLoader(module, filename)
       }
     }
     // clear cache in case of server restart
+    // 清除缓存
     delete _require.cache[_require.resolve(fileName)]
+    // 加载配置文件
     const raw = _require(fileName)
+    // 恢复默认加载器
     _require.extensions[loaderExt] = defaultLoader
     return raw.__esModule ? raw.default : raw
   }

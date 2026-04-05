@@ -109,9 +109,19 @@ export interface HotChannel<Api = any> {
   api?: Api
 }
 
+/**
+ * 用于获取文件的短路径名称，具体逻辑是：
+ * 如果文件路径在指定的根目录下，则返回相对于根目录的路径；否则返回原始文件路径。
+ * @param file 文件路径
+ * @param root 根目录
+ * @returns 短名称
+ */
 export function getShortName(file: string, root: string): string {
+  // withTrailingSlash 在尾部添加斜杠
+  // file 路径是否以 root路径开头
   return file.startsWith(withTrailingSlash(root))
-    ? path.posix.relative(root, file)
+    ? // 计算出相对路径
+      path.posix.relative(root, file)
     : file
 }
 
@@ -416,6 +426,7 @@ export async function handleHMRUpdate(
 ): Promise<void> {
   // 获取服务器配置
   const { config } = server
+  // 警告忽略过时的模块图 API
   const mixedModuleGraph = ignoreDeprecationWarnings(() => server.moduleGraph)
 
   // 获取所有环境
@@ -1125,6 +1136,9 @@ const enum LexerState {
  * Lex import.meta.hot.accept() for accepted deps.
  * Since hot.accept() can only accept string literals or array of string
  * literals, we don't really need a heavy @babel/parse call on the entire source.
+ * Vite 热模块替换（HMR）系统中的一个词法分析函数，
+ * 用于解析 import.meta.hot.accept() 调用中的依赖项。
+ * 它能够识别并提取 HMR 接受的依赖模块路径，同时判断模块是否为自接受模块。
  *
  * @returns selfAccepts
  */
@@ -1133,9 +1147,12 @@ export function lexAcceptedHmrDeps(
   start: number,
   urls: Set<{ url: string; start: number; end: number }>,
 ): boolean {
+  // 词法分析状态
   let state: LexerState = LexerState.inCall
   // the state can only be 2 levels deep so no need for a stack
+  // 前一个状态
   let prevState: LexerState = LexerState.inCall
+  // 当前正在分析的依赖路径
   let currentDep: string = ''
 
   function addDep(index: number) {
@@ -1147,26 +1164,31 @@ export function lexAcceptedHmrDeps(
     currentDep = ''
   }
 
+  // 遍历代码字符
   for (let i = start; i < code.length; i++) {
     const char = code.charAt(i)
     switch (state) {
+      // 处理函数调用状态
       case LexerState.inCall:
-      case LexerState.inArray:
+      case LexerState.inArray: // 处理数组状态（多个依赖项）
         if (char === `'`) {
           prevState = state
-          state = LexerState.inSingleQuoteString
+          state = LexerState.inSingleQuoteString // 单引号状态
         } else if (char === `"`) {
           prevState = state
-          state = LexerState.inDoubleQuoteString
+          state = LexerState.inDoubleQuoteString // 双引号状态
         } else if (char === '`') {
           prevState = state
-          state = LexerState.inTemplateString
+          state = LexerState.inTemplateString // 模板字符串状态
+
+          // 空格跳过
         } else if (whitespaceRE.test(char)) {
           continue
         } else {
+          // 处理函数调用状态
           if (state === LexerState.inCall) {
             if (char === `[`) {
-              state = LexerState.inArray
+              state = LexerState.inArray // 数组状态
             } else {
               // reaching here means the first arg is neither a string literal
               // nor an Array literal (direct callback) or there is no arg
@@ -1176,6 +1198,8 @@ export function lexAcceptedHmrDeps(
           } else {
             if (char === `]`) {
               return false // done
+
+              // 逗号跳过
             } else if (char === ',') {
               continue
             } else {
@@ -1184,6 +1208,7 @@ export function lexAcceptedHmrDeps(
           }
         }
         break
+      // 处理单引号字符串
       case LexerState.inSingleQuoteString:
         if (char === `'`) {
           addDep(i)
@@ -1197,6 +1222,7 @@ export function lexAcceptedHmrDeps(
           currentDep += char
         }
         break
+      // 处理双引号字符串
       case LexerState.inDoubleQuoteString:
         if (char === `"`) {
           addDep(i)
@@ -1210,6 +1236,7 @@ export function lexAcceptedHmrDeps(
           currentDep += char
         }
         break
+      // 处理模板字符串
       case LexerState.inTemplateString:
         if (char === '`') {
           addDep(i)
