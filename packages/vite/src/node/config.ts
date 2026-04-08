@@ -2491,6 +2491,11 @@ export async function loadConfigFromFile(
   }
 }
 
+/**
+ * 用于原生导入 Vite 配置文件。
+ * @param resolvedPath 配置文件路径
+ * @returns
+ */
 async function nativeImportConfigFile(resolvedPath: string) {
   const module = await import(
     pathToFileURL(resolvedPath).href + '?t=' + Date.now()
@@ -2501,6 +2506,12 @@ async function nativeImportConfigFile(resolvedPath: string) {
   }
 }
 
+/**
+ * 用于通过 runner 方式导入配置文件。
+ * 它使用 runnerImport 函数动态加载配置文件，提取默认导出作为配置对象，并返回配置对象及其依赖项。
+ * @param resolvedPath 配置文件路径
+ * @returns
+ */
 async function runnerImportConfigFile(resolvedPath: string) {
   const { module, dependencies } = await runnerImport<{
     default: UserConfigExport

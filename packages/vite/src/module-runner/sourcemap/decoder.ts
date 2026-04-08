@@ -16,17 +16,28 @@ type Needle = {
 }
 
 export class DecodedMap {
+  // 原始 mappings 字符串（VLQ 编码）
   _encoded: string
+  // 解码后的映射数据，懒加载。
+  // 结构为：行 → 列 → 映射片段，每个片段包含 [生成的列, 源码索引, 源码行, 源码列, 名称索引]。
   _decoded: undefined | number[][][]
+  // 记忆化状态对象（用于缓存解码结果，避免重复解码）
   _decodedMemo: Stats
+  // 当前 Source Map 文件的路径
   url: string
+  // 当前 Source Map 文件的路径
   file: string
+  // Source Map 版本号（通常为 3）
   version: number
+  // 原始名称列表
   names: string[] = []
+  // 将 map.sources 中的相对路径基于 from 的目录解析为绝对路径
   resolvedSources: string[]
 
   constructor(
+    // 原始 Source Map 对象（符合 Source Map V3 规范），包含 mappings、names、sources、version 等字段
     public map: SourceMapLike,
+    // 当前 Source Map 文件的路径（或基准路径），用于解析 sources 中的相对路径
     from: string,
   ) {
     const { mappings, names, sources } = map

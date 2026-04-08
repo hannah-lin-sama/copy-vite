@@ -269,14 +269,25 @@ export const normalizeModuleRunnerTransport = (
       }
       await invokeableTransport.send(data)
     },
+    /**
+     * 用于在确保连接状态的情况下调用底层传输的方法。
+     * 它确保在执行远程操作前，传输通道已经建立连接，避免因连接未就绪导致的错误。
+     * @param name
+     * @param data
+     * @returns
+     */
     async invoke(name, data) {
+      // 1、传输通道已连接
       if (!isConnected) {
+        // 存在正在进行promise，等待连接完成
         if (connectingPromise) {
           await connectingPromise
         } else {
+          // 不存在正在进行promise，直接报错
           throw new Error('invoke was called before connect')
         }
       }
+      // 2、未连接
       return invokeableTransport.invoke(name, data)
     },
   }

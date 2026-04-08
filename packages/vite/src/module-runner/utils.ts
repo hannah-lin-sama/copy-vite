@@ -1,10 +1,13 @@
 import * as pathe from 'pathe'
 import { isWindows } from '../shared/utils'
 
+// 将 base64 编码的字符串解码为原始字符串
+// atob 是浏览器提供的内置方法，用于解码 base64 字符串
 export const decodeBase64: typeof atob =
   typeof atob !== 'undefined'
     ? atob
-    : (str: string) => Buffer.from(str, 'base64').toString('utf-8')
+    : // 将 base64 字符串转为 Buffer，再调用 .toString('utf-8') 得到 UTF-8 字符串
+      (str: string) => Buffer.from(str, 'base64').toString('utf-8')
 
 const CHAR_FORWARD_SLASH = 47
 const CHAR_BACKWARD_SLASH = 92

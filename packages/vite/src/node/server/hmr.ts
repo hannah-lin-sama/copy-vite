@@ -1338,27 +1338,43 @@ export type ServerHotChannel = HotChannel<ServerHotChannelApi>
 export type NormalizedServerHotChannel =
   NormalizedHotChannel<ServerHotChannelApi>
 
+/**
+ * 用于创建服务器热更新通道。
+ * 它提供了一个双向通信机制，用于在 Vite 开发服务器和客户端之间传递热更新信息，是 HMR 系统的重要组成部分。
+ * @returns 热更新通道实例
+ */
 export function createServerHotChannel(): ServerHotChannel {
+  // 1、创建事件发射器
+  // 用于内部事件通信，如连接事件
   const innerEmitter = new EventEmitter()
+  // 用于外部事件通信，如发送热更新 payload
   const outsideEmitter = new EventEmitter()
 
+  // 2、返回热更新通道对象
   return {
+    // 发送热更新
     send(payload: HotPayload) {
+      // 通过 outsideEmitter 触发 'send' 事件
       outsideEmitter.emit('send', payload)
     },
+    // 移除事件监听器
     off(event, listener: () => void) {
       innerEmitter.off(event, listener)
     },
+    // 添加事件监听器
     on: ((event: string, listener: () => unknown) => {
       innerEmitter.on(event, listener)
     }) as ServerHotChannel['on'],
+    // 关闭通道，移除所有事件监听器
     close() {
       innerEmitter.removeAllListeners()
       outsideEmitter.removeAllListeners()
     },
+    // 监听连接事件
     listen() {
       innerEmitter.emit('connection')
     },
+    // 提供通道 API 接口
     api: {
       innerEmitter,
       outsideEmitter,

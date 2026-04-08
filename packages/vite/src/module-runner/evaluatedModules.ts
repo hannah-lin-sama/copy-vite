@@ -26,6 +26,9 @@ export class EvaluatedModuleNode {
   }
 }
 
+/**
+ * 主要服务于 模块运行器（Module Runner），关注模块执行后的状态
+ */
 export class EvaluatedModules {
   public readonly idToModuleMap: Map<string, EvaluatedModuleNode> = new Map()
   public readonly fileToModulesMap: Map<string, Set<EvaluatedModuleNode>> =
@@ -66,20 +69,26 @@ export class EvaluatedModules {
    * Ensure that module is in the graph. If the module is already in the graph,
    * it will return the existing module node. Otherwise, it will create a new
    * module node and add it to the graph.
+   * 用于确保指定 ID 和 URL 的模块存在。
+   * 它采用"存在则返回，不存在则创建"的策略，是模块运行器中模块管理的核心方法
    * @param id Resolved module ID
    * @param url URL that was used in the import statement
    */
   public ensureModule(id: string, url: string): EvaluatedModuleNode {
+    // 规范化模块 ID，确保它符合 Vite 的模块 ID 规范
     id = normalizeModuleId(id)
     if (this.idToModuleMap.has(id)) {
       const moduleNode = this.idToModuleMap.get(id)!
+      // 更新 URL 到模块的映射
       this.urlToIdModuleMap.set(url, moduleNode)
       return moduleNode
     }
+    // 创建新模块节点
     const moduleNode = new EvaluatedModuleNode(id, url)
     this.idToModuleMap.set(id, moduleNode)
     this.urlToIdModuleMap.set(url, moduleNode)
 
+    // 更新文件到模块的映射
     const fileModules = this.fileToModulesMap.get(moduleNode.file) || new Set()
     fileModules.add(moduleNode)
     this.fileToModulesMap.set(moduleNode.file, fileModules)
@@ -102,6 +111,8 @@ export class EvaluatedModules {
   /**
    * Extracts the inlined source map from the module code and returns the decoded
    * source map. If the source map is not inlined, it will return null.
+   * 用于获取指定模块 ID 的源码映射。
+   * 它通过解析模块代码中的内联源码映射，为调试提供原始源码位置信息，是 Vite 模块运行器中支持源码映射的核心方法。
    * @param id Resolved module ID
    */
   getModuleSourceMapById(id: string): DecodedMap | null {
@@ -111,13 +122,17 @@ export class EvaluatedModules {
     if (!mod.meta || !('code' in mod.meta)) return null
 
     const pattern = `//# ${SOURCEMAPPING_URL}=data:application/json;base64,`
+    // 查找模式在代码中的最后位置
     const lastIndex = mod.meta.code.lastIndexOf(pattern)
     if (lastIndex === -1) return null
 
+    // 使用正则表达式提取 base64 编码的源码映射
     const mapString = MODULE_RUNNER_SOURCEMAPPING_REGEXP.exec(
       mod.meta.code.slice(lastIndex),
     )?.[1]
     if (!mapString) return null
+    // 创建 DecodedMap 实例
+    // decodeBase64 解码 base64 字符串
     mod.map = new DecodedMap(JSON.parse(decodeBase64(mapString)), mod.file)
     return mod.map
   }

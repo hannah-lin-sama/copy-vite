@@ -59,6 +59,7 @@ export function withTrailingSlash(path: string): string {
   return path
 }
 
+// 获取异步函数的构造函数
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 export const AsyncFunction = async function () {}.constructor as typeof Function
 
