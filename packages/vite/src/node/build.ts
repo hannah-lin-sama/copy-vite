@@ -546,6 +546,13 @@ export async function build(
   return builder.build(environment)
 }
 
+/**
+ * 用于解析并准备构建所需的配置
+ * @param inlineConfig  内联配置
+ * @param patchConfig 配置修补函数，用于修改解析后的配置
+ * @param patchPlugins 插件修补函数，用于修改解析后的插件
+ * @returns
+ */
 function resolveConfigToBuild(
   inlineConfig: InlineConfig = {},
   patchConfig?: (config: ResolvedConfig) => void,
@@ -553,15 +560,22 @@ function resolveConfigToBuild(
 ): Promise<ResolvedConfig> {
   return resolveConfig(
     inlineConfig,
-    'build',
-    'production',
-    'production',
-    false,
-    patchConfig,
-    patchPlugins,
+    'build', // 构建命令
+    'production', // 生产模式
+    'production', // ssr模式 生产环境
+    false, // 是否开发服务器
+    patchConfig, // 配置修补函数，用于修改解析后的配置
+    patchPlugins, // 插件修补函数，用于修改解析后的插件
   )
 }
 
+/**
+ * 将内部配置转换为 Rolldown 打包器可识别的选项的核心函数
+ * 负责处理入口（input）、输出（output）、插件、外部依赖、转换选项、优化选项等，同时兼顾库模式（lib）、SSR、普通应用等多种构建场景
+ * @param environment
+ * @param chunkMetadataMap
+ * @returns
+ */
 export function resolveRolldownOptions(
   environment: Environment,
   chunkMetadataMap: ChunkMetadataMap,
@@ -572,8 +586,12 @@ export function resolveRolldownOptions(
   const ssr = environment.config.consumer === 'server'
 
   const resolve = (p: string) => path.resolve(root, p)
+
+  // 1、解析入口（input）
   const input = libOptions
-    ? options.rollupOptions.input ||
+    ? // 1.1 库模式：优先使用 rollupOptions.input，支持字符串、数组、对象（多入口）
+      options.rollupOptions.input ||
+      // 使用 libOptions.entry，支持字符串、数组、对象（多入口）
       (typeof libOptions.entry === 'string'
         ? resolve(libOptions.entry)
         : Array.isArray(libOptions.entry)
@@ -584,16 +602,21 @@ export function resolveRolldownOptions(
                 resolve(file),
               ]),
             ))
-    : typeof options.ssr === 'string'
+    : // 1.2 SSR 模式：如果 build.ssr 是字符串，则作为入口（通常为服务端入口文件）
+      typeof options.ssr === 'string'
       ? resolve(options.ssr)
-      : options.rollupOptions.input || resolve('index.html')
+      : // 1.3 普通应用：用户通过 rollupOptions.input 指定 或者默认入口为 index.html
+        options.rollupOptions.input || resolve('index.html')
 
+  // SSR 构建不应以 HTML 文件作为入口，需要指定 JS/TS 入口
   if (ssr && typeof input === 'string' && input.endsWith('.html')) {
     throw new Error(
       `rollupOptions.input should not be an html file when building for SSR. ` +
         `Please specify a dedicated SSR entry.`,
     )
   }
+
+  //  2、CSS 代码分割检查
   if (options.cssCodeSplit === false) {
     const inputs =
       typeof input === 'string'
@@ -601,6 +624,7 @@ export function resolveRolldownOptions(
         : Array.isArray(input)
           ? input
           : Object.values(input)
+    // 如果禁用了 CSS 代码分割，入口中不能包含 CSS 文件（否则无法正确分割）
     if (inputs.some((input) => input.endsWith('.css'))) {
       throw new Error(
         `When "build.cssCodeSplit: false" is set, "rollupOptions.input" should not include CSS files.`,
@@ -611,27 +635,35 @@ export function resolveRolldownOptions(
   const outDir = resolve(options.outDir)
 
   // inject environment and ssr arg to plugin load/transform hooks
+  // 3、插件处理
   const plugins = environment.plugins.map((p) =>
     injectEnvironmentToHooks(environment, chunkMetadataMap, p),
   )
 
+  // 4、构建 rollupOptions 基础配置
   const rollupOptions: RolldownOptions = {
+    // SSR 模式下允许扩展签名，库模式要求严格，普通应用不需要保留
     preserveEntrySignatures: ssr
       ? 'allow-extension'
       : libOptions
         ? 'strict'
         : false,
     // cache: options.watch ? undefined : false,
+    // rollupOptions 其他选项
     ...options.rollupOptions,
+    // rollupOptions.output 输出选项
     output: options.rollupOptions.output,
     input,
     plugins,
+    // rollupOptions.external 外部依赖选项
     external: options.rollupOptions.external,
     onLog(level, log) {
       onRollupLog(level, log, environment)
     },
     transform: {
+      // 代码转译目标（如 es2015），从 build.target 继承
       target: options.target === false ? undefined : options.target,
+      // rollupOptions.transform 其他选项
       ...options.rollupOptions.transform,
       define: {
         ...options.rollupOptions.transform?.define,
@@ -642,9 +674,11 @@ export function resolveRolldownOptions(
     // TODO: remove this and enable rolldown's CSS support later
     moduleTypes: {
       ...options.rollupOptions.moduleTypes,
+      // 将 .css 文件当作 JS 模块处理（因为 Rolldown 的 CSS 支持尚未完全启用）
       '.css': 'js',
     },
     experimental: {
+      // rollupOptions.experimental 其他选项
       ...options.rollupOptions.experimental,
       viteMode: true,
     },
@@ -664,8 +698,14 @@ export function resolveRolldownOptions(
     environment.name === 'ssr' &&
     environment.getTopLevelConfig().ssr?.target === 'webworker'
 
+  /**
+   * 构建和配置 Rollup/Rolldown 的输出选项
+   * @param output
+   * @returns
+   */
   const buildOutputOptions = (output: OutputOptions = {}): OutputOptions => {
     // @ts-expect-error See https://github.com/vitejs/vite/issues/5812#issuecomment-984345618
+    // 弃用警告，建议使用 rollupOptions.output
     if (output.output) {
       logger.warn(
         `You've set "rollupOptions.output.output" in your config. ` +
@@ -673,12 +713,14 @@ export function resolveRolldownOptions(
           `Please use "rollupOptions.output" instead.`,
       )
     }
+    // 抛出错误，建议使用 dir 和 entryFileNames
     if (output.file) {
       throw new Error(
         `Vite does not support "rollupOptions.output.file". ` +
           `Please use "rollupOptions.output.dir" and "rollupOptions.output.entryFileNames" instead.`,
       )
     }
+    // 弃用警告，建议使用 build.sourcemap 选项
     if (output.sourcemap) {
       logger.warnOnce(
         colors.yellow(
@@ -688,6 +730,7 @@ export function resolveRolldownOptions(
       )
     }
 
+    // 让用户提供的配置优先于默认值
     const format = output.format || 'es'
     const jsExt =
       (ssr && !isSsrTargetWebworkerEnvironment) || libOptions
@@ -702,6 +745,7 @@ export function resolveRolldownOptions(
       format,
       exports: 'auto',
       sourcemap: options.sourcemap,
+      // 库名称
       name: libOptions ? libOptions.name : undefined,
       // hoistTransitiveImports: libOptions ? false : undefined,
       // es2015 enables `generatedCode.symbols`
@@ -710,6 +754,7 @@ export function resolveRolldownOptions(
       generatedCode: {
         preset: 'es2015',
       },
+      // 入口文件名
       entryFileNames: ssr
         ? `[name].${jsExt}`
         : libOptions
@@ -723,12 +768,15 @@ export function resolveRolldownOptions(
                 packageCache,
               )
           : path.posix.join(options.assetsDir, `[name]-[hash].${jsExt}`),
+      // 分块文件名
       chunkFileNames: libOptions
         ? `[name]-[hash].${jsExt}`
         : path.posix.join(options.assetsDir, `[name]-[hash].${jsExt}`),
+      // 资产文件名
       assetFileNames: libOptions
         ? `[name].[ext]`
         : path.posix.join(options.assetsDir, `[name]-[hash].[ext]`),
+      // 代码分割
       codeSplitting:
         output.codeSplitting ??
         (output.format === 'umd' ||
@@ -737,6 +785,7 @@ export function resolveRolldownOptions(
           (typeof input === 'string' || Object.keys(input).length === 1))
           ? false
           : undefined),
+      // 注释
       comments:
         typeof output.comments === 'boolean'
           ? output.comments
@@ -765,10 +814,12 @@ export function resolveRolldownOptions(
             ? 'dce-only'
             : false,
       topLevelVar: true,
+      // 让用户提供的配置优先于默认值
       ...output,
     }
   }
 
+  // 5、输出选项
   // resolve lib mode outputs
   const outputs = resolveBuildOutputs(
     options.rollupOptions.output,
@@ -787,6 +838,8 @@ export function resolveRolldownOptions(
 
 /**
  * Build an App environment, or a App library (if libraryOptions is provided)
+ * Vite 8 中负责生产构建单个环境（如 client、ssr）的核心函数。
+ * 基于 Rolldown（Rust 打包器）执行打包，支持普通构建和监听模式（watch）
  **/
 async function buildEnvironment(
   environment: BuildEnvironment,
@@ -794,6 +847,7 @@ async function buildEnvironment(
   const { logger, config } = environment
   const { root, build: options } = config
 
+  // 记录开始构建的日志
   logger.info(
     colors.cyan(
       `vite v${VERSION} ${colors.green(
@@ -805,18 +859,23 @@ async function buildEnvironment(
   let bundle: RolldownBuild | undefined
   let startTime: number | undefined
   try {
+    // 收集每个输出 chunk 的元数据（如模块 ID、文件大小等）
     const chunkMetadataMap = new ChunkMetadataMap()
+    // 解析 Rolldown 选项
     const rollupOptions = resolveRolldownOptions(environment, chunkMetadataMap)
 
     // watch file changes with rollup
+    // 监视文件变化
     if (options.watch) {
       logger.info(colors.cyan(`\nwatching for file changes...`))
 
+      // 获取所有输出目录
       const resolvedOutDirs = getResolvedOutDirs(
         root,
         options.outDir,
         options.rollupOptions.output,
       )
+      // 是否在构建前清空输出目录
       const emptyOutDir = resolveEmptyOutDir(
         options.emptyOutDir,
         root,
@@ -836,6 +895,8 @@ async function buildEnvironment(
       )
 
       const { watch } = await import('rolldown')
+      // 调用 rolldown.watch 创建监听器
+      // watcher 对象，该对象会持续监听文件变化并在每次变更后自动重新打包
       const watcher = watch({
         ...rollupOptions,
         watch: {
@@ -846,12 +907,18 @@ async function buildEnvironment(
       })
 
       watcher.on('event', (event) => {
+        // 开始build
         if (event.code === 'BUNDLE_START') {
           logger.info(colors.cyan(`\nbuild started...`))
           chunkMetadataMap.clearResetChunks()
+
+          // 构建结束
         } else if (event.code === 'BUNDLE_END') {
+          // 释放本次构建资源
           event.result.close()
           logger.info(colors.cyan(`built in ${event.duration}ms.`))
+
+          // 构建错误
         } else if (event.code === 'ERROR') {
           const e = event.error
           enhanceRollupError(e)
@@ -863,23 +930,32 @@ async function buildEnvironment(
       return watcher
     }
 
+    // 普通构建
     // write or generate files with rolldown
     const { rolldown } = await import('rolldown')
     startTime = Date.now()
+    // 创建 Rolldown 构建实例
     bundle = await rolldown(rollupOptions)
 
+    // 多个输出配置
     const res: RolldownOutput[] = []
+
     for (const output of arraify(rollupOptions.output!)) {
+      // bundle.write(outputOptions) 将产物写入磁盘
+      // bundle.generate(outputOptions) 仅返回产物对象
       res.push(await bundle[options.write ? 'write' : 'generate'](output))
     }
     for (const output of res) {
       for (const chunk of output.output) {
+        // 注入 chunk 元数据
         injectChunkMetadata(chunkMetadataMap, chunk)
       }
     }
     logger.info(
       `${colors.green(`✓ built in ${displayTime(Date.now() - startTime)}`)}`,
     )
+
+    // 返回构建结果
     return Array.isArray(rollupOptions.output) ? res : res[0]
   } catch (e) {
     enhanceRollupError(e)
@@ -892,6 +968,7 @@ async function buildEnvironment(
     }
     throw e
   } finally {
+    // 关闭 Rolldown 构建实例
     if (bundle) await bundle.close()
   }
 }
@@ -1195,33 +1272,54 @@ function isExternal(id: string, test: string | RegExp) {
   }
 }
 
+/**
+ * 管理构建过程中 chunk 和 asset 的元数据
+ */
 export class ChunkMetadataMap {
   private _inner = new Map<string, ChunkMetadata | AssetMetadata>()
   private _resetChunks = new Set<string>()
 
+  /**
+   * 根据 chunk 或 asset 对象获取唯一键
+   * @param chunk
+   * @returns
+   */
   private _getKey(chunk: RenderedChunk | OutputChunk | OutputAsset): string {
+    // 优先使用 preliminaryFileName > fileName
     return 'preliminaryFileName' in chunk
       ? chunk.preliminaryFileName
       : chunk.fileName
   }
 
+  /**
+   * 为 chunk 或 asset 创建默认的元数据对象
+   * @param chunk
+   * @returns
+   */
   private _getDefaultValue(
     chunk: RenderedChunk | OutputChunk | OutputAsset,
   ): ChunkMetadata | AssetMetadata {
     return chunk.type === 'chunk'
-      ? {
+      ? // 对于 chunk
+        {
           importedAssets: new Set(),
           importedCss: new Set(),
           // NOTE: adding this as a workaround for now ideally we'd want to remove this workaround
           // use shared `chunk.modules` object to allow mutation on js side plugins
           __modules: chunk.modules,
         }
-      : {
+      : //
+        {
           importedAssets: new Set(),
           importedCss: new Set(),
         }
   }
 
+  /**
+   * 获取 chunk 或 asset 的元数据
+   * @param chunk
+   * @returns
+   */
   get(
     chunk: RenderedChunk | OutputChunk | OutputAsset,
   ): ChunkMetadata | AssetMetadata {
@@ -1449,6 +1547,12 @@ function wrapEnvironmentHook<HookName extends keyof Plugin>(
   }
 }
 
+/**
+ * 为 chunk 或 asset 注入 Vite 元数据
+ * @param chunkMetadataMap chunk 元数据映射
+ * @param chunk
+ * @param resetChunkMetadata
+ */
 function injectChunkMetadata(
   chunkMetadataMap: ChunkMetadataMap,
   chunk: RenderedChunk | OutputChunk | OutputAsset,
@@ -1459,10 +1563,12 @@ function injectChunkMetadata(
   }
   // define instead of assign to avoid detected as a change
   // https://github.com/rolldown/rolldown/blob/f4c5ff27799f2b0152c689c398e61bc7d30429ff/packages/rolldown/src/utils/transform-to-rollup-output.ts#L87
+  // 注入 viteMetadata 属性
   Object.defineProperty(chunk, 'viteMetadata', {
     value: chunkMetadataMap.get(chunk),
     enumerable: true,
   })
+  // 对于 chunk，注入 modules 属性
   if (chunk.type === 'chunk') {
     Object.defineProperty(chunk, 'modules', {
       get() {
@@ -1755,13 +1861,19 @@ export interface BuilderOptions {
 }
 
 const _builderOptionsDefaults = Object.freeze({
-  sharedConfigBuild: false,
-  sharedPlugins: false,
+  sharedConfigBuild: false, // 默认不共享配置构建
+  sharedPlugins: false, // 默认不共享插件
   // buildApp
 } satisfies BuilderOptions)
+
 export const builderOptionsDefaults: Readonly<Partial<BuilderOptions>> =
   _builderOptionsDefaults
 
+/**
+ * 解析构建器选项
+ * @param options 构建器选项
+ * @returns 解析后的构建器选项
+ */
 export function resolveBuilderOptions(
   options: BuilderOptions | undefined,
 ): ResolvedBuilderOptions | undefined {
@@ -1776,12 +1888,16 @@ export type ResolvedBuilderOptions = Required<BuilderOptions>
 
 /**
  * Creates a ViteBuilder to orchestrate building multiple environments.
+ * 创建和配置 vite构建器
  * @experimental
+ * params inlineConfig 行内配置
+ * params useLegacyBuilder 是否使用旧版构建器
  */
 export async function createBuilder(
   inlineConfig: InlineConfig = {},
   useLegacyBuilder: null | boolean = false,
 ): Promise<ViteBuilder> {
+  // 处理旧版兼容
   const patchConfig = (resolved: ResolvedConfig) => {
     if (!(useLegacyBuilder ?? !resolved.builder)) return
 
@@ -1794,29 +1910,41 @@ export async function createBuilder(
       ...resolved.environments[environmentName].build,
     }
   }
+  // 配置解析
   const config = await resolveConfigToBuild(inlineConfig, patchConfig)
+  // 是否使用旧版构建器
+  // 根据 config.builder 或 useLegacyBuilder 选择使用新版（基于 Rolldown）还是旧版构建器
   useLegacyBuilder ??= !config.builder
+  // 构建器配置
   const configBuilder = config.builder ?? resolveBuilderOptions({})!
 
   const environments: Record<string, BuildEnvironment> = {}
 
+  // 创建 ViteBuilder 对象
   const builder: ViteBuilder = {
     environments,
     config,
+    /**
+     * 构建整个应用
+     */
     async buildApp() {
+      // 创建插件上下文
       const pluginContext = new BasicMinimalPluginContext(
         { ...basePluginContextMeta, watchMode: false },
         config.logger,
       )
 
       // order 'pre' and 'normal' hooks are run first, then config.builder.buildApp, then 'post' hooks
+      // 是否已调用配置构建器的 buildApp 方法
       let configBuilderBuildAppCalled = false
+
+      // 执行插件的 buildApp 钩子
       for (const p of config.getSortedPlugins('buildApp')) {
         const hook = p.buildApp
         if (
           !configBuilderBuildAppCalled &&
           typeof hook === 'object' &&
-          hook.order === 'post'
+          hook.order === 'post' // 只在 post 阶段调用
         ) {
           configBuilderBuildAppCalled = true
           await configBuilder.buildApp(builder)
@@ -1824,20 +1952,28 @@ export async function createBuilder(
         const handler = getHookHandler(hook)
         await handler.call(pluginContext, builder)
       }
+      // 如果未调用配置构建器的 buildApp 方法，调用默认 buildApp 方法
       if (!configBuilderBuildAppCalled) {
         await configBuilder.buildApp(builder)
       }
       // fallback to building all environments if no environments have been built
+      // 检查是否有环境被构建
       if (
         Object.values(builder.environments).every(
           (environment) => !environment.isBuilt,
         )
       ) {
         for (const environment of Object.values(builder.environments)) {
+          // 遍历所有环境并构建每个环境
           await builder.build(environment)
         }
       }
     },
+    /**
+     * 构建单个环境
+     * @param environment
+     * @returns
+     */
     async build(
       environment: BuildEnvironment,
     ): Promise<RolldownOutput | RolldownOutput[] | RolldownWatcher> {
@@ -1860,17 +1996,22 @@ export async function createBuilder(
       }
     },
   }
-
+  /**
+   * 环境设置函数
+   */
   async function setupEnvironment(name: string, config: ResolvedConfig) {
     const environment = await config.build.createEnvironment(name, config)
     await environment.init()
     environments[name] = environment
   }
-
+  // 环境初始化
+  // 使用旧版构建器
   if (useLegacyBuilder) {
     await setupEnvironment(config.build.ssr ? 'ssr' : 'client', config)
   } else {
+    // 新版构建器
     const environmentConfigs: [string, ResolvedConfig][] = []
+
     for (const environmentName of Object.keys(config.environments)) {
       // We need to resolve the config again so we can properly merge options
       // and get a new set of plugins for each build environment. The ecosystem
@@ -1907,14 +2048,17 @@ export async function createBuilder(
             }
           }
         }
+        // 为每个环境名称创建环境配置
         environmentConfig = await resolveConfigToBuild(
           inlineConfig,
           patchConfig,
           patchPlugins,
         )
       }
+
       environmentConfigs.push([environmentName, environmentConfig])
     }
+    // 并行初始化所有环境
     await Promise.all(
       environmentConfigs.map(
         async ([environmentName, environmentConfig]) =>

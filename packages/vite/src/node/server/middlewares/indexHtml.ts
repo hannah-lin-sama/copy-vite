@@ -496,7 +496,8 @@ const devHtmlHook: IndexHtmlTransformHook = async (
 }
 
 /**
- * 一个中间件函数生成器，用于处理 Vite 开发服务器和预览服务器中的 HTML 请求
+ * 当客户端请求一个 HTML 文件（通常是 /index.html 或通过 history fallback 匹配的路径）时，
+ * 读取文件、应用插件转换（如注入客户端脚本）、并返回响应。
  * @param root 根目录路径
  * @param server Vite 服务器实例
  * @returns Connect 中间件函数
@@ -521,8 +522,10 @@ export function indexHtmlMiddleware(
 
     const url = req.url && cleanUrl(req.url)
     // htmlFallbackMiddleware appends '.html' to URLs
+    // 只对 HTML 类型的请求（URL 以 .html 结尾且请求头 sec-fetch-dest 不是 'script'）进行干预
     if (url?.endsWith('.html') && req.headers['sec-fetch-dest'] !== 'script') {
       // 1、Full Bundle 模式处理
+      // 在这种模式下，静态资源（包括 HTML）可能被打包到内存中，而不是直接从磁盘读取。
       if (fullBundleEnv) {
         const pathname = decodeURIComponent(url)
         const filePath = pathname.slice(1) // remove first /
@@ -569,6 +572,7 @@ export function indexHtmlMiddleware(
 
       // 2、常规模式处理
       let filePath: string
+      // 如果 URL 以 FS_PREFIX（即 /@fs/）开头，则从中提取真实文件路径（用于访问项目外部的文件）
       if (isDev && url.startsWith(FS_PREFIX)) {
         filePath = decodeURIComponent(fsPathFromId(url))
       } else {
@@ -602,6 +606,7 @@ export function indexHtmlMiddleware(
         try {
           let html = await fsp.readFile(filePath, 'utf-8')
           if (isDev) {
+            // 执行所有插件的 transformIndexHtml 钩子
             html = await server.transformIndexHtml(url, html, req.originalUrl)
           }
           return send(req, res, html, 'html', { headers })
