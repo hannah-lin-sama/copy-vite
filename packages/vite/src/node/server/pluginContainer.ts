@@ -276,9 +276,15 @@ class EnvironmentPluginContainer<Env extends Environment = Environment> {
     return this._resolvedRollupOptions!
   }
 
+  /**
+   * 解析 Rollup 选项
+   * @returns Rollup 选项
+   */
   async resolveRollupOptions(): Promise<InputOptions> {
     if (!this._resolvedRollupOptions) {
       let options = this.environment.config.build.rollupOptions
+
+      // 调用 options 钩子
       for (const optionsHook of this.getSortedPluginHooks('options')) {
         if (this._closed) {
           throwClosedServerError()
@@ -312,12 +318,17 @@ class EnvironmentPluginContainer<Env extends Environment = Environment> {
       // Don't throw here if closed, so buildEnd and closeBundle hooks can finish running
       if (condition && !condition(plugin)) continue
 
+      // 获取插件要执行的钩子函数（buildStart等）
       const hook = plugin[hookName]
       const handler: Function = getHookHandler(hook)
+
+      // 如果是顺序钩子，等待所有并行钩子完成
       if ((hook as { sequential?: boolean }).sequential) {
         await Promise.all(parallelPromises)
         parallelPromises.length = 0
         await handler.apply(context(plugin), args(plugin))
+
+        // 执行并行钩子
       } else {
         parallelPromises.push(handler.apply(context(plugin), args(plugin)))
       }
@@ -335,10 +346,14 @@ class EnvironmentPluginContainer<Env extends Environment = Environment> {
     this._started = true
     const config = this.environment.getTopLevelConfig()
     this._buildStartPromise = this.handleHookPromise(
+      // 调用 buildStart 钩子
       this.hookParallel(
         'buildStart',
-        (plugin) => this._getPluginContext(plugin),
-        () => [this.options as NormalizedInputOptions],
+        (plugin) => this._getPluginContext(plugin), // 获取插件上下文
+        () => [this.options as NormalizedInputOptions], // 获取输入选项
+        // 客户端环境
+        // 开发服务区配置perEnvironmentStartEndDuringDev
+        // 或插件配置了perEnvironmentStartEndDuringDev
         (plugin) =>
           this.environment.name === 'client' ||
           config.server.perEnvironmentStartEndDuringDev ||
@@ -475,26 +490,45 @@ class EnvironmentPluginContainer<Env extends Environment = Environment> {
     }
   }
 
+  /**
+   * 加载模块
+   * @param id 模块 ID
+   * @returns
+   */
   async load(id: string): Promise<LoadResult | null> {
+    // 判断是否是 SSR 环境
     let ssr = this.environment.config.consumer === 'server'
+    // 获取顶层配置
     const topLevelConfig = this.environment.getTopLevelConfig()
+    // 创建options 对象 ,传给插件的handler函数
     const options = { ssr }
+    // 创建 LoadPluginContext 上下文，主要重写addWatchFile方法
     const ctx = new LoadPluginContext(this)
+
+    // 调用 load 钩子
     for (const plugin of this.getSortedPlugins('load')) {
+      // 服务器已关闭、且可恢复模式下，抛出错误
+      // 为什么要抛出错误？因为服务器已关闭，不能继续加载模块
       if (this._closed && this.environment.config.dev.recoverable)
         throwClosedServerError()
 
       const filter = getCachedFilterForPlugin(plugin, 'load')
+      // 如果插件没有过滤函数，或者过滤函数返回 false，跳过
+      // 为什么要跳过？因为插件没有过滤函数，或者过滤函数返回 false，说明插件不支持当前模块（文件）
       if (filter && !filter(id)) continue
 
       ctx._plugin = plugin
 
+      // 检查是否启用 removePluginHookSsrArgument 弃用警告
+      // 配置项 config.future.removePluginHookSsrArgument
+      // 为什么要检查？因为 removePluginHookSsrArgument 是一个弃用的选项
       if (
         isFutureDeprecationEnabled(
           topLevelConfig,
           'removePluginHookSsrArgument',
         )
       ) {
+        // 添加 ssr 属性
         Object.defineProperty(options, 'ssr', {
           get() {
             warnFutureDeprecation(
@@ -510,22 +544,42 @@ class EnvironmentPluginContainer<Env extends Environment = Environment> {
         })
       }
 
+      // 获取 load 钩子的 handler函数
       const handler = getHookHandler(plugin.load)
+
+      // 执行 load 钩子 的 handle函数
       const result = await this.handleHookPromise(
         handler.call(ctx as any, id, options),
       )
+
+      // 如果插件返回结果
       if (result != null) {
+        // 如果插件返回的结果是对象，更新模块信息
         if (isObject(result)) {
           ctx._updateModuleInfo(id, result)
         }
+        // 更新模块加载时添加的导入
         this._updateModuleLoadAddedImports(id, ctx._addedImports)
+        // 返回插件返回的结果
+        // vite-plugin-vue插件 返回结果{code, map}
         return result
       }
     }
+
+    // 更新模块加载时添加的导入
+    // 为什么要更新？因为 load 钩子没有返回结果，说明没有插件支持当前模块（文件），所以要更新导入为空
+    // ctx._addedImports 为空
     this._updateModuleLoadAddedImports(id, ctx._addedImports)
     return null
   }
 
+  /**
+   * 转换模块代码
+   * @param code 代码
+   * @param id 模块 ID
+   * @param options 选项
+   * @returns
+   */
   async transform(
     code: string,
     id: string,
@@ -540,27 +594,36 @@ class EnvironmentPluginContainer<Env extends Environment = Environment> {
   }> {
     let ssr = this.environment.config.consumer === 'server'
     const topLevelConfig = this.environment.getTopLevelConfig()
+
+    // 创建options 对象 ,传给插件的handler函数
     const optionsWithSSR = options
       ? { ...options, ssr, moduleType: options.moduleType ?? 'js' }
       : { ssr, moduleType: 'js' }
+    // 获取 inMap 选项
     const inMap = options?.inMap
 
+    // 创建 TransformPluginContext 上下文
     const ctx = new TransformPluginContext(this, id, code, inMap as SourceMap)
+
     ctx._addedImports = this._getAddedImports(id)
 
     for (const plugin of this.getSortedPlugins('transform')) {
+      // 服务器已关闭、且可恢复模式下，抛出错误
+      // 为什么要抛出错误？因为服务器已关闭，不能继续转换模块代码
       if (this._closed && this.environment.config.dev.recoverable)
         throwClosedServerError()
 
       const filter = getCachedFilterForPlugin(plugin, 'transform')
       if (filter && !filter(id, code, optionsWithSSR.moduleType)) continue
 
+      // 检查是否启用 removePluginHookSsrArgument 弃用警告
       if (
         isFutureDeprecationEnabled(
           topLevelConfig,
           'removePluginHookSsrArgument',
         )
       ) {
+        // 添加 ssr 属性
         Object.defineProperty(optionsWithSSR, 'ssr', {
           get() {
             warnFutureDeprecation(
@@ -576,12 +639,15 @@ class EnvironmentPluginContainer<Env extends Environment = Environment> {
         })
       }
 
+      // 更新插件活动信息
+      // 为什么要更新？因为 transform 钩子会修改模块代码，所以要更新插件活动信息
       ctx._updateActiveInfo(plugin, id, code)
       const start = debugPluginTransform ? performance.now() : 0
       let result: TransformResult | string | undefined
       const handler = getHookHandler(plugin.transform)
       try {
         result = await this.handleHookPromise(
+          // 执行 transform 钩子 的 handle函数
           handler.call(ctx as any, code, id, optionsWithSSR),
         )
       } catch (e) {
@@ -593,20 +659,29 @@ class EnvironmentPluginContainer<Env extends Environment = Environment> {
         plugin.name,
         prettifyUrl(id, this.environment.config.root),
       )
+      // 如果插件返回的结果是对象
       if (isObject(result)) {
         if (result.code !== undefined) {
+          // 更新code
           code = result.code as string
+
+          // 更新 sourcemap
           if (result.map) {
             if (debugSourcemapCombine) {
               // @ts-expect-error inject plugin name for debug purpose
+              // 注入插件名称
               result.map.name = plugin.name
             }
+            // 更新 sourcemapChain 数组
             ctx.sourcemapChain.push(result.map)
           }
         }
+
+        // 更新 moduleType
         if (result.moduleType !== undefined) {
           optionsWithSSR.moduleType = result.moduleType
         }
+        // 更新模块信息
         ctx._updateModuleInfo(id, result)
       } else {
         code = result
@@ -843,10 +918,18 @@ class PluginContext
     return this._container.getModuleInfo(id)
   }
 
+  /**
+   * 更新模块信息
+   * 其中场景：在插件对模块进行代码转换后，需要更新模块信息
+   * @param id 模块 ID
+   * @param param1 更新的模块信息
+   * @param param1.meta 模块元数据
+   */
   _updateModuleInfo(id: string, { meta }: { meta?: object | null }): void {
     if (meta) {
       const moduleInfo = this.getModuleInfo(id)
       if (moduleInfo) {
+        // 更新模块元数据
         moduleInfo.meta = { ...moduleInfo.meta, ...meta }
       }
     }
@@ -858,8 +941,15 @@ class PluginContext
       : Array.prototype[Symbol.iterator]()
   }
 
+  /**
+   * 添加要监听的文件
+   * @param id 文件 ID
+   */
   addWatchFile(id: string): void {
+    // 添加文件 ID 到 watchFiles Set 中
     this._container.watchFiles.add(id)
+
+    // 如果有 watcher 实例，确保文件被监听
     if (this._container.watcher)
       ensureWatchedFile(
         this._container.watcher,
@@ -1051,11 +1141,18 @@ class LoadPluginContext extends PluginContext {
     super(null!, container)
   }
 
+  /**
+   * 重写addWatchFile方法，添加要监听的文件
+   * @param id 文件 ID
+   */
   override addWatchFile(id: string): void {
+    // 没有 _addedImports 时，创建一个空 Set
     if (!this._addedImports) {
       this._addedImports = new Set()
     }
+    // 添加文件 ID 到 Set 中
     this._addedImports.add(id)
+    // 调用父类的 addWatchFile 方法
     super.addWatchFile(id)
   }
 }
@@ -1089,7 +1186,12 @@ class TransformPluginContext
     }
   }
 
+  /**
+   * 组合多个 sourcemap 生成最终的 sourcemap
+   * @returns
+   */
   _getCombinedSourcemap(): SourceMap | { mappings: '' } | null {
+    // 启用 debugSourcemapCombine 打印调试信息
     if (
       debugSourcemapCombine &&
       debugSourcemapCombineFilter &&
@@ -1103,6 +1205,8 @@ class TransformPluginContext
 
     let combinedMap = this.combinedMap
     // { mappings: '' }
+
+    // 当 combinedMap 是一个没有 version 属性且 mappings 为空字符串的对象时，直接返回该对象并清空 sourcemapChain
     if (
       combinedMap &&
       !('version' in combinedMap) &&
@@ -1114,13 +1218,16 @@ class TransformPluginContext
 
     for (let m of this.sourcemapChain) {
       if (typeof m === 'string') m = JSON.parse(m)
+
+      // version 是 sourcemap 规范要求的必填属性，缺少它表示 sourcemap 无效
       if (!('version' in (m as SourceMap))) {
-        // { mappings: '' }
+        // 情况1: mappings 为空字符串，设置 combinedMap 为 { mappings: '' }，结束循环
         if ((m as SourceMap).mappings === '') {
           combinedMap = { mappings: '' }
           break
         }
         // empty, nullified source map
+        // 情况2: mappings不是字符串，设置 combinedMap 为 null，结束循环
         combinedMap = null
         break
       }
@@ -1165,6 +1272,7 @@ class TransformPluginContext
     return map
   }
 
+  // 更新当前正在处理的插件、文件 ID 和代码
   _updateActiveInfo(plugin: Plugin, id: string, code: string): void {
     this._plugin = plugin
     this._activeId = id

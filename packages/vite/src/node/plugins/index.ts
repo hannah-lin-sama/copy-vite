@@ -197,15 +197,26 @@ export function getHookHandler<T extends ObjectHook<Function>>(
 }
 
 type FilterForPluginValue = {
+  // 用于 resolveId 钩子的过滤器
   resolveId?: PluginFilter | undefined
+  // 用于 load 钩子的过滤器
   load?: PluginFilter | undefined
+  // 用于 transform 钩子的过滤器
   transform?: TransformHookFilter | undefined
 }
 const filterForPlugin = new WeakMap<Plugin, FilterForPluginValue>()
 
+/**
+ * 获取并缓存插件钩子的过滤器
+ * 为插件的 resolveId、load 和 transform 钩子创建并缓存相应的过滤器函数
+ * @param plugin
+ * @param hookName
+ * @returns
+ */
 export function getCachedFilterForPlugin<
   H extends 'resolveId' | 'load' | 'transform',
 >(plugin: Plugin, hookName: H): FilterForPluginValue[H] | undefined {
+  // 有缓存直接取
   let filters = filterForPlugin.get(plugin)
   if (filters && hookName in filters) {
     return filters[hookName]
@@ -219,19 +230,27 @@ export function getCachedFilterForPlugin<
   let filter: PluginFilter | TransformHookFilter | undefined
   switch (hookName) {
     case 'resolveId': {
+      // 提取并创建 ID 过滤器
+      // extractFilter 提取plugin.resolveId 的 filter属性
+      // rawFilter 是一个数组[]
       const rawFilter = extractFilter(plugin.resolveId)?.id
+      // 设置 resolveId 缓存，组合过滤器，支持排除和包含过滤
       filters.resolveId = createIdFilter(rawFilter)
       filter = filters.resolveId
       break
     }
     case 'load': {
+      // 提取并创建 ID 过滤器
       const rawFilter = extractFilter(plugin.load)?.id
+      // 设置 load 缓存
       filters.load = createIdFilter(rawFilter)
       filter = filters.load
       break
     }
     case 'transform': {
+      // 提取并创建转换过滤器，支持 ID、代码和模块类型过滤
       const rawFilters = extractFilter(plugin.transform)
+      // 设置 transform 缓存
       filters.transform = createFilterForTransform(
         rawFilters?.id,
         rawFilters?.code,
@@ -244,6 +263,7 @@ export function getCachedFilterForPlugin<
   return filter as FilterForPluginValue[H] | undefined
 }
 
+// 提取插件钩子的过滤器
 function extractFilter<T extends Function, F>(
   hook: ObjectHook<T, { filter?: F }> | undefined,
 ) {
