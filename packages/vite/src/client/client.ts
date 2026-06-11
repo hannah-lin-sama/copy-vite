@@ -151,11 +151,12 @@ const hmrClient = new HMRClient(
   transport,
   isBundleMode
     ? async function importUpdatedModule({
-        url,
-        acceptedPath,
+        url, // 补丁文件的 URL，例如 "/hmr_patch_0.js"
+        acceptedPath, // 需要热更新的模块路径（例如 "/src/App.vue"）
         isWithinCircularImport,
       }) {
         const importPromise = import(base + url!).then(() =>
+          // 从 Rolldown 运行时中提取模块的导出
           // @ts-expect-error globalThis.__rolldown_runtime__
           globalThis.__rolldown_runtime__.loadExports(acceptedPath),
         )

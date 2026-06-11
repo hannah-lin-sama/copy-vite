@@ -793,6 +793,7 @@ const configDefaults = Object.freeze({
   // cacheDir
   // mode
   plugins: [],
+  // html
   html: {
     cspNonce: undefined,
   },
@@ -1357,9 +1358,9 @@ export function isResolvedConfig(
 
 export async function resolveConfig(
   inlineConfig: InlineConfig,
-  command: 'build' | 'serve',
-  defaultMode = 'development',
-  defaultNodeEnv = 'development',
+  command: 'build' | 'serve', // 开发服务器 serve ，构建模式 build
+  defaultMode = 'development', // 默认模式为 development， build 模式为 production
+  defaultNodeEnv = 'development', // 默认 devlopment , build 模式为 production
   isPreview = false,
   /** @internal */
   patchConfig: ((config: ResolvedConfig) => void) | undefined = undefined,
@@ -1398,6 +1399,7 @@ export async function resolveConfig(
 
   let { configFile } = config
   if (configFile !== false) {
+    // 加载配置文件
     const loadResult = await loadConfigFromFile(
       configEnv,
       configFile,
@@ -1653,6 +1655,7 @@ export async function resolveConfig(
       : resolvedRoot
   }
 
+  // // 加载环境变量
   const userEnv = loadEnv(mode, envDir, resolveEnvPrefix(config))
 
   // Note it is possible for user to have a custom mode, e.g. `staging` where
@@ -1928,11 +1931,11 @@ export async function resolveConfig(
     preview,
     envDir,
     env: {
-      ...userEnv,
-      BASE_URL,
-      MODE: mode,
-      DEV: !isProduction,
-      PROD: isProduction,
+      ...userEnv, // 合并用户环境变量
+      BASE_URL, // 基础 URL
+      MODE: mode, // 模式
+      DEV: !isProduction, // 是否开发模式
+      PROD: isProduction, // 是否生产模式
     },
     assetsInclude(file: string) {
       return DEFAULT_ASSETS_RE.test(file) || assetsFilter(file)
@@ -1994,6 +1997,7 @@ export async function resolveConfig(
         )
       }
     },
+    // 禁止加载的文件路径模式
     fsDenyGlob: picomatch(
       // matchBase: true does not work as it's documented
       // https://github.com/micromatch/picomatch/issues/89
@@ -2007,6 +2011,7 @@ export async function resolveConfig(
         dot: true,
       },
     ),
+    // 安全模块路径，用于存储 Vite 生成的模块
     safeModulePaths: new Set<string>(),
     [SYMBOL_RESOLVED_CONFIG]: true,
   }
@@ -2328,6 +2333,12 @@ async function bundleAndLoadConfigFile(resolvedPath: string) {
   }
 }
 
+/**
+ * 负责将用户的配置文件（如 vite.config.ts）通过 Rolldown 打包成一个自包含的 bundle
+ * @param fileName 配置文件的绝对路径
+ * @param isESM 是否为 ES 模块
+ * @returns 包含打包后的代码和依赖项的 Promise
+ */
 async function bundleConfigFile(
   fileName: string,
   isESM: boolean,
@@ -2335,6 +2346,9 @@ async function bundleConfigFile(
   let importMetaResolverRegistered = false
 
   const root = path.dirname(fileName)
+
+  // 配置文件中可能使用 __dirname、__filename、import.meta.url 等 Node.js 特有的文件级变量
+  // 但在 bundle 后，这些变量的语义会发生变化。因
   const dirnameVarName = '__vite_injected_original_dirname'
   const filenameVarName = '__vite_injected_original_filename'
   const importMetaUrlVarName = '__vite_injected_original_import_meta_url'
@@ -2342,11 +2356,14 @@ async function bundleConfigFile(
     '__vite_injected_original_import_meta_resolve'
   const importMetaResolveRegex = /import\.meta\s*\.\s*resolve/
 
+  // 生成 Bundle
   const bundle = await rolldown({
     input: fileName,
     // target: [`node${process.versions.node}`],
+    // 配置文件在 Node.js 环境执行，打包目标针对 Node.js 优化
     platform: 'node',
     resolve: {
+      // 仅使用 main 字段解析，避免浏览器端 browser/module 字段干扰 Node.js 的模块解析
       mainFields: ['main'],
     },
     transform: {
@@ -2361,16 +2378,24 @@ async function bundleConfigFile(
       },
     },
     // disable treeshake to include files that is not sideeffectful to `moduleIds`
+    // 关闭摇树 → 目的是让所有模块都保留在 moduleIds 中，才能完整收集所有依赖
     treeshake: false,
     // disable tsconfig as it's confusing to respect tsconfig options in the config file
     // this also aligns with other config loader behaviors
-    tsconfig: false,
+    // 配置文件加载不应受项目 tsconfig.json 的选项影响，与其他加载器行为保持一致
+    tsconfig: false, // 关闭 tsconfig
     plugins: [
+      // 外部化依赖——externalize-deps 插件
+      // 外部化所有第三方依赖，只打包用户配置文件本身
       {
         name: 'externalize-deps',
         resolveId: {
+          // 只处理不以 . 或 # 开头的裸模块导入（/^[^.#].*/）
           filter: { id: /^[^.#].*/ },
           async handler(id, importer, { kind }) {
+            // !importer: 入口文件本身，跳过
+            // path.isAbsolute(id): 绝对路径，跳过（这是本地文件，应该打包进去）
+            // isNodeBuiltin(id): Node.js 内置模块（如 fs/path），跳过（原生加载）
             if (!importer || path.isAbsolute(id) || isNodeBuiltin(id)) {
               return
             }
@@ -2378,6 +2403,7 @@ async function bundleConfigFile(
             // With the `isNodeBuiltin` check above, this check captures if the builtin is a
             // non-node built-in, which esbuild doesn't know how to handle. In that case, we
             // externalize it so the non-node runtime handles it instead.
+            // Node-like 内置模块 / npm: 协议：直接标记为 external
             if (isNodeLikeBuiltin(id) || id.startsWith('npm:')) {
               return { id, external: true }
             }
@@ -2385,6 +2411,7 @@ async function bundleConfigFile(
             const isImport = isESM || kind === 'dynamic-import'
             let idFsPath: string | undefined
             try {
+              // 第三方 npm 包：直接标记为 external
               idFsPath = nodeResolveWithVite(id, importer, {
                 root,
                 isRequire: !isImport,
@@ -2409,20 +2436,26 @@ async function bundleConfigFile(
             }
             if (!idFsPath) return
             // always no-externalize json files as rolldown does not support import attributes
+            // JSON 文件：不外部化，直接内联（因为 Rolldown 不支持 import attributes）
             if (idFsPath.endsWith('.json')) {
               return idFsPath
             }
 
+            // 对于 ESM 格式，将文件系统路径转为 file:// URL 格式，符合 ES Module 规范。
             if (idFsPath && isImport) {
               idFsPath = pathToFileURL(idFsPath).href
             }
+            // 所有第三方依赖都标记为 external → 不打包到结果中，运行时由 Node.js 原生加载。
             return { id: idFsPath, external: true }
           },
         },
       },
       {
+        // 注入文件级变量——inject-file-scope-variables 插件
+        // 为每个模块注入真正的 __dirname、__filename 等文件级变量值。
         name: 'inject-file-scope-variables',
         transform: {
+          // 只处理 JS/TS/CMJ 文件
           filter: { id: /\.[cm]?[jt]s$/ },
           handler(code, id) {
             let injectValues =
@@ -2432,6 +2465,7 @@ async function bundleConfigFile(
                 pathToFileURL(id).href,
               )};`
             if (importMetaResolveRegex.test(code)) {
+              // 如果是 ESM，注入真实的 import.meta.resolve 实现；如果是 CJS，注入一个抛出错误的函数
               if (isESM) {
                 if (!importMetaResolverRegistered) {
                   importMetaResolverRegistered = true
@@ -2444,6 +2478,8 @@ async function bundleConfigFile(
             }
 
             let injectedContents: string
+
+            // 支持 hashbang（#!/usr/bin/env node）：如果文件以 #! 开头，变量注入会放在第一行之后
             if (code.startsWith('#!')) {
               // hashbang
               let firstLineEndIndex = code.indexOf('\n')
@@ -2465,6 +2501,8 @@ async function bundleConfigFile(
       },
     ],
   })
+
+  // bundle.generate() 返回的输出数组，包含 OutputChunk（代码块）和 OutputAsset（资源文件）
   const result = await bundle.generate({
     format: isESM ? 'esm' : 'cjs',
     sourcemap: 'inline',
@@ -2476,14 +2514,25 @@ async function bundleConfigFile(
   })
   await bundle.close()
 
+  // 获取入口 chunk
   const entryChunk = result.output.find(
+    // chunk.type === 'chunk'	过滤掉 asset（静态资源），只保留代码块
+    // chunk.isEntry	只取入口 chunk（即用户配置文件对应的那个 chunk）
     (chunk): chunk is OutputChunk => chunk.type === 'chunk' && chunk.isEntry,
   )!
+  // 构建 chunk 映射表
+  // Object.fromEntries(...)	将键值对数组转成 Record<string, OutputChunk> 对象
   const bundleChunks = Object.fromEntries(
+    // result.output.flatMap(...)	遍历输出，过滤掉 asset，将每个 chunk 转成 [fileName, chunk] 键值对
+    // c.type === 'chunk'	只处理代码块
     result.output.flatMap((c) => (c.type === 'chunk' ? [[c.fileName, c]] : [])),
   )
 
   const allModules = new Set<string>()
+
+  // 收集依赖
+  // 递归遍历所有 chunk 的 moduleIds、imports、dynamicImports
+  // 当依赖的配置文件变化时触发 dev server 重启
   collectAllModules(bundleChunks, entryChunk.fileName, allModules)
 
   return {
@@ -2493,23 +2542,39 @@ async function bundleConfigFile(
   }
 }
 
+/**
+ *
+ * @param bundle chunk 映射表，key 为文件名，value 为 chunk 对象
+ * @param fileName 当前要遍历的 chunk 文件名
+ * @param allModules 输出参数，收集所有模块的绝对路径
+ * @param analyzedModules 内部防重，记录已经分析过的 chunk 文件名
+ * @returns
+ */
 function collectAllModules(
   bundle: Record<string, OutputChunk>,
   fileName: string,
   allModules: Set<string>,
   analyzedModules = new Set<string>(),
 ) {
+  // 如果当前 chunk 已经分析过就直接返回，防止模块循环引用导致的无限递归。
   if (analyzedModules.has(fileName)) return
+
+  // 将当前 chunk 加入"已分析"集合。
   analyzedModules.add(fileName)
 
+  // 从映射表中取出当前 chunk。! 非空断言——保证 fileName 一定存在于 bundle 中。
   const chunk = bundle[fileName]!
+
+  // 收集模块 ID（核心）
   for (const mod of chunk.moduleIds) {
     allModules.add(mod)
   }
+  // 递归静态导入
   for (const i of chunk.imports) {
     analyzedModules.add(i)
     collectAllModules(bundle, i, allModules, analyzedModules)
   }
+  // 递归动态导入
   for (const i of chunk.dynamicImports) {
     analyzedModules.add(i)
     collectAllModules(bundle, i, allModules, analyzedModules)
@@ -2520,7 +2585,17 @@ interface NodeModuleWithCompile extends NodeModule {
   _compile(code: string, filename: string): any
 }
 
+// Node.js 的 createRequire 是一个非常实用的工具函数，主要用于在 ES Module 环境中模拟出 require 函数的功能。
+// import.meta.url 是什么？它在 ESM 中代表当前文件的完整 URL 路径
 const _require = createRequire(/** #__KEEP__ */ import.meta.url)
+
+/**
+ *
+ * @param fileName
+ * @param bundledCode
+ * @param isESM
+ * @returns
+ */
 async function loadConfigFromBundledFile(
   fileName: string,
   bundledCode: string,

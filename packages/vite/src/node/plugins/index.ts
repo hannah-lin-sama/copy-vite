@@ -39,24 +39,33 @@ import { forwardConsolePlugin } from './forwardConsole'
 import { oxcPlugin } from './oxc'
 import { esbuildBannerFooterCompatPlugin } from './esbuildBannerFooterCompatPlugin'
 
+/**
+ * 用于解析 Vite 插件
+ * @param config
+ * @param prePlugins
+ * @param normalPlugins
+ * @param postPlugins
+ * @returns
+ */
 export async function resolvePlugins(
   config: ResolvedConfig,
   prePlugins: Plugin[],
   normalPlugins: Plugin[],
   postPlugins: Plugin[],
 ): Promise<Plugin[]> {
-  const isBuild = config.command === 'build'
-  const isBundled = config.isBundled
-  const isWorker = config.isWorker
+  const isBuild = config.command === 'build' // 是否为构建命令
+  const isBundled = config.isBundled // 是否为 Full Bundle 模式
+  const isWorker = config.isWorker // 是否为 worker 模式
   const buildPlugins = isBundled
-    ? await (await import('../build')).resolveBuildPlugins(config)
+    ? // 如果是捆绑模式，动态导入并解析构建插件
+      await (await import('../build')).resolveBuildPlugins(config)
     : { pre: [], post: [] }
   const { modulePreload } = config.build
 
   return [
-    !isBundled ? optimizedDepsPlugin() : null,
-    !isWorker ? watchPackageDataPlugin(config.packageCache) : null,
-    !isBundled ? preAliasPlugin(config) : null,
+    !isBundled ? optimizedDepsPlugin() : null, // 优化依赖插件 (非捆绑模式)
+    !isWorker ? watchPackageDataPlugin(config.packageCache) : null, // 包数据监听插件 (非 Worker 环境)
+    !isBundled ? preAliasPlugin(config) : null, // 预别名插件 (非捆绑模式)
     isBundled && !config.resolve.alias.some((v) => v.customResolver)
       ? nativeAliasPlugin({
           entries: config.resolve.alias.map((item) => {
@@ -74,9 +83,11 @@ export async function resolvePlugins(
 
     ...prePlugins,
 
+    // 模块预加载 polyfill 插件
     modulePreload !== false && modulePreload.polyfill
       ? modulePreloadPolyfillPlugin(config)
       : null,
+    // OXC 解析插件
     ...oxcResolvePlugin(
       {
         root: config.root,
@@ -92,30 +103,46 @@ export async function resolvePlugins(
         ? { ...config, consumer: 'client', optimizeDepsPluginNames: [] }
         : undefined,
     ),
+    // HTML 内联代理插件
     htmlInlineProxyPlugin(config),
+    // CSS 插件
     cssPlugin(config),
+    // ESBuild 兼容性插件
     esbuildBannerFooterCompatPlugin(config),
     // @oxc-project/runtime resolution is handled by rolldown in build
+    // OXC 运行时和核心插件
     config.oxc !== false && !isBundled ? oxcRuntimePlugin() : null,
     config.oxc !== false ? oxcPlugin(config) : null,
+    // JSON 插件
     nativeJsonPlugin({ ...config.json, minify: isBuild }),
+    // WASM 辅助插件
     wasmHelperPlugin(),
+    // Web Worker 插件
     webWorkerPlugin(config),
+    // 资源插件
     assetPlugin(config),
     // for now client only
+    // 控制台转发插件
     config.server.forwardConsole.enabled &&
       forwardConsolePlugin({ environments: ['client'] }),
 
     ...normalPlugins,
 
+    // WASM 回退插件
     nativeWasmFallbackPlugin(),
+    // 定义插件
     definePlugin(config),
+    // CSS 后处理插件
     cssPostPlugin(config),
+    // 构建 HTML 插件
     isBundled && buildHtmlPlugin(config),
+    // Worker 和资源的 import.meta.url 插件
     workerImportMetaUrlPlugin(config),
     assetImportMetaUrlPlugin(config),
     ...buildPlugins.pre,
+    // 动态导入变量插件
     dynamicImportVarsPlugin(config),
+    // 导入全局插件
     importGlobPlugin(config),
 
     ...postPlugins,
@@ -126,8 +153,11 @@ export async function resolvePlugins(
     ...(isBundled
       ? []
       : [
+          // 客户端注入插件
           clientInjectionsPlugin(config),
+          // CSS 分析插件
           cssAnalysisPlugin(config),
+          // 导入分析插件
           importAnalysisPlugin(config),
         ]),
   ].filter(Boolean) as Plugin[]

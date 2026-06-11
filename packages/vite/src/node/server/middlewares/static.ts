@@ -295,6 +295,7 @@ export function isFileLoadingAllowed(
 ): boolean {
   const { fs } = config.server
 
+  // 非严格模式下，所有文件都被允许加载
   if (!fs.strict) return true
 
   // NOTE: `fs.readFile('/foo.png/')` tries to load `'/foo.png'`
@@ -302,11 +303,17 @@ export function isFileLoadingAllowed(
   const filePathWithoutTrailingSlash = filePath.endsWith('/')
     ? filePath.slice(0, -1)
     : filePath
+
+  // 检查路径是否在禁止列表
   if (config.fsDenyGlob(filePathWithoutTrailingSlash)) return false
 
+  // 如果在安全模块路径中，返回 true 表示允许访问
   if (config.safeModulePaths.has(filePath)) return true
 
+  // 如果在允许目录中，返回 true 表示允许访问
   if (fs.allow.some((uri) => isFileInTargetPath(uri, filePath))) return true
+
+  // 其他情况，返回 false 表示不允许访问
 
   return false
 }
@@ -315,14 +322,17 @@ export function checkLoadingAccess(
   config: ResolvedConfig,
   path: string,
 ): 'allowed' | 'denied' | 'fallback' {
+  // 权限检查：检查文件是否被允许加载
   if (isFileLoadingAllowed(config, slash(path))) {
     return 'allowed'
   }
+  // 文件存在但不允许访问
   if (isFileReadable(path)) {
     return 'denied'
   }
   // if the file doesn't exist, we shouldn't restrict this path as it can
   // be an API call. Middlewares would issue a 404 if the file isn't handled
+  // 文件不存在
   return 'fallback'
 }
 

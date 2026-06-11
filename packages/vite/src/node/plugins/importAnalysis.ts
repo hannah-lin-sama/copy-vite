@@ -228,24 +228,35 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
   const enablePartialAccept = config.experimental.hmrPartialAccept
   const matchAlias = getAliasPatternMatcher(config.resolve.alias)
 
-  let _env: string | undefined
-  let _ssrEnv: string | undefined
+  let _env: string | undefined // 缓存客户端（非SSR）环境代码
+  let _ssrEnv: string | undefined // 缓存SSR环境代码
+
+  /**
+   * 获取环境变量
+   * @param ssr 是否为 SSR 环境 是否为 SSR 环境
+   * @returns 环境变量字符串
+   */
   function getEnv(ssr: boolean) {
     if (!_ssrEnv || !_env) {
       const importMetaEnvKeys: Record<string, any> = {}
       const userDefineEnv: Record<string, any> = {}
+
+      // 从 config.env 来（来自 loadEnv()，来自 .env 文件 + process.env）
       for (const key in config.env) {
         importMetaEnvKeys[key] = JSON.stringify(config.env[key])
       }
+      // 从 config.define 来（用户自定义的 import.meta.env.* 覆盖）
       for (const key in config.define) {
         // non-import.meta.env.* is handled in `clientInjection` plugin
         if (key.startsWith('import.meta.env.')) {
+          // 16 个字符（"import.meta.env." 的长度）
           userDefineEnv[key.slice(16)] = config.define[key]
         }
       }
+      // 合并两个环境变量来源
       const env = `import.meta.env = ${serializeDefine({
         ...importMetaEnvKeys,
-        SSR: '__vite_ssr__',
+        SSR: '__vite_ssr__', // 占位符，后续替换
         ...userDefineEnv,
       })};`
       _ssrEnv = env.replace('__vite_ssr__', 'true')
@@ -744,8 +755,12 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
       const isClassicWorker =
         importer.includes(WORKER_FILE_ID) && importer.includes('type=classic')
 
+      // hasEnv	表示当前模块源代码中使用了 import.meta.env（由静态分析检测到）
+      // !isClassicWorker	当前模块不是 Classic Worker
       if (hasEnv && !isClassicWorker) {
+        // getEnv(ssr)	生成 import.meta.env = {...}; JavaScript 代码（SSR/非SSR 对应不同版本，缓存复用）
         // inject import.meta.env
+        // str().prepend	将这段代码前置插入到模块源码开头
         str().prepend(getEnv(ssr))
       }
 
@@ -761,9 +776,13 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
                   : `[detected api usage]`
           } ${prettifyUrl(importer, root)}`,
         )
+        // HMR 热更新上下文注入
         // inject hot context
+        // str().prepend	在源码最前面插入，确保在用户代码执行前 import.meta.hot 已就绪
         str().prepend(
+          // clientPublicPath	/@vite/client — Vite 客户端运行时的虚拟路径
           `import { createHotContext as __vite__createHotContext } from "${clientPublicPath}";` +
+            // createHotContext	为每个模块创建独立的 HMR 上下文对象
             `import.meta.hot = __vite__createHotContext(${JSON.stringify(
               normalizeHmrUrl(importerModule.url),
             )});`,
@@ -772,8 +791,10 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
 
       if (needQueryInjectHelper) {
         if (isClassicWorker) {
+          // Classic Worker 不支持 ESM import 语法，只能把函数实现直接 append 到文件末尾
           str().append('\n' + __vite__injectQuery.toString())
         } else {
+          // 通过标准 import 从 @vite/client 引入
           str().prepend(
             `import { injectQuery as __vite__injectQuery } from "${clientPublicPath}";`,
           )

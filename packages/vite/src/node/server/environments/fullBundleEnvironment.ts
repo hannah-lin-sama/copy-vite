@@ -105,8 +105,13 @@ export class FullBundleDevEnvironment extends DevEnvironment {
         : rollupOptions.output
     )!
 
+    // 当浏览器端加载新模块时，将该模块的信息注册到开发引擎中
     this.hot.on('vite:module-loaded', (payload, client) => {
       const clientId = this.clients.setupIfNeeded(client)
+
+      // 将已加载的模块列表注册到开发引擎
+      // devEngine 负责追踪模块之间的依赖关系、记录模块的导出内容等。
+      // 注册后，当这些模块发生变化时，HMR 系统能够准确地找到并替换它们。
       this.devEngine.registerModules(clientId, payload.modules)
     })
     this.hot.on('vite:client:disconnect', (_payload, client) => {
@@ -116,6 +121,7 @@ export class FullBundleDevEnvironment extends DevEnvironment {
       }
     })
 
+    // 负责监听文件变化、增量打包、生成内存文件、并通过 HMR 将更新推送到浏览器客户端
     this.devEngine = await dev(rollupOptions, outputOptions, {
       onHmrUpdates: (result) => {
         if (result instanceof Error) {
@@ -309,6 +315,15 @@ export class FullBundleDevEnvironment extends DevEnvironment {
     return rolldownOptions
   }
 
+  /**
+   *  Vite 开发服务器中处理热模块替换 (HMR) 输出
+   *  根据 HMR 输出的类型执行不同的操作，包括无操作、完全页面重载或发送热更新到客户端
+   * @param client 热更新通道客户端，用于向浏览器发送更新信息
+   * @param files 发生变化的文件路径数组
+   * @param hmrOutput HmrOutput	热更新输出信息，包含更新类型、代码、边界等
+   * @param invalidateInformation
+   * @returns
+   */
   private handleHmrOutput(
     client: NormalizedHotChannelClient,
     files: string[],
@@ -320,6 +335,7 @@ export class FullBundleDevEnvironment extends DevEnvironment {
     const shortFile = files
       .map((file) => getShortName(file, this.config.root))
       .join(', ')
+
     if (hmrOutput.type === 'FullReload') {
       const reason = hmrOutput.reason
         ? colors.dim(` (${hmrOutput.reason})`)
@@ -339,12 +355,15 @@ export class FullBundleDevEnvironment extends DevEnvironment {
       code: typeof hmrOutput.code === 'string' ? '[code]' : hmrOutput.code,
     })
 
+    // 将热更新输出的代码保存到内存文件中
+    // 这些文件将被浏览器端加载，用于更新页面内容
     this.memoryFiles.set(hmrOutput.filename, { source: hmrOutput.code })
     if (hmrOutput.sourcemapFilename && hmrOutput.sourcemap) {
       this.memoryFiles.set(hmrOutput.sourcemapFilename, {
         source: hmrOutput.sourcemap,
       })
     }
+    // 为每个热更新边界创建更新对象
     const updates: Update[] = hmrOutput.hmrBoundaries.map((boundary: any) => {
       return {
         type: 'js-update',
@@ -355,6 +374,7 @@ export class FullBundleDevEnvironment extends DevEnvironment {
         timestamp: Date.now(),
       }
     })
+    // 向客户端发送更新信息，通知浏览器端更新页面内容
     client.send({
       type: 'update',
       updates,

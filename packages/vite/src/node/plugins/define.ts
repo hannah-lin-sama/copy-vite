@@ -113,6 +113,7 @@ export function definePlugin(config: ResolvedConfig): Plugin {
     return pattern
   }
 
+  // 构建模式
   if (isBundled) {
     return {
       name: 'vite:define',
@@ -164,6 +165,14 @@ export function definePlugin(config: ResolvedConfig): Plugin {
   }
 }
 
+/**
+ * 使用 OXC 编译器对代码进行转换，将指定的宏定义替换为实际值
+ * @param environment
+ * @param code
+ * @param id
+ * @param define
+ * @returns
+ */
 export async function replaceDefine(
   environment: Environment,
   code: string,
@@ -173,6 +182,7 @@ export async function replaceDefine(
   code: string
   map: ReturnType<typeof transformSync>['map'] | null
 }> {
+  // rolldown.utils.transformSync 用于同步转换代码，支持 define 替换
   const result = transformSync(id, code, {
     lang: 'js',
     sourceType: 'module',
@@ -198,10 +208,15 @@ export async function replaceDefine(
  * Like `JSON.stringify` but keeps raw string values as a literal
  * in the generated code. For example: `"window"` would refer to
  * the global `window` object directly.
+ * 将一个键值对对象序列化为 JavaScript 对象字面量字符串
  */
 export function serializeDefine(define: Record<string, any>): string {
   let res = `{`
+
+  // 对键进行排序，确保一致的输出顺序
   const keys = Object.keys(define).sort()
+
+  // 遍历键值对，将每个键值对转换为字符串并拼接起来
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i]
     const val = define[key]

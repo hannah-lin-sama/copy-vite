@@ -180,25 +180,44 @@ export function nodeIsElement(
   return node.nodeName[0] !== '#'
 }
 
+/**
+ * 遍历 AST 中的所有节点，对每个节点执行用户提供的访问者函数
+ * @param node 	当前正在遍历的节点
+ * @param visitor 	用于遍历 AST 节点的函数
+ */
 function traverseNodes(
   node: DefaultTreeAdapterMap['node'],
   visitor: (node: DefaultTreeAdapterMap['node']) => void,
 ) {
+  // 处理 <template> 节点，将其内容作为子节点遍历
   if (node.nodeName === 'template') {
     node = (node as DefaultTreeAdapterMap['template']).content
   }
+  // 对当前节点执行访问者函数
   visitor(node)
+
+  // 递归遍历子节点
+  // 检查当前节点是否为元素、文档或文档片段
   if (
     nodeIsElement(node) ||
     node.nodeName === '#document' ||
     node.nodeName === '#document-fragment'
   ) {
+    // 遍历其 childNodes 数组，对每个子节点递归调用 traverseNodes 函数
     node.childNodes.forEach((childNode) => traverseNodes(childNode, visitor))
   }
 }
 
 type ParseWarnings = Partial<Record<ErrorCodes, string>>
 
+/**
+ * 用 parse5 库将 HTML 字符串解析为抽象语法树（AST），
+ * 然后遍历树中的所有节点，对每个节点执行用户提供的访问者函数
+ * @param html 	要解析的 HTML 字符串
+ * @param filePath 	当前处理的文件路径
+ * @param warn 	用于报告解析错误的函数
+ * @param visitor 	用于遍历 AST 节点的函数
+ */
 export async function traverseHtml(
   html: string,
   filePath: string,
@@ -206,8 +225,10 @@ export async function traverseHtml(
   visitor: (node: DefaultTreeAdapterMap['node']) => void,
 ): Promise<void> {
   // lazy load compiler
+  // 动态导入 parse5 库，实现懒加载
   const { parse } = await import('parse5')
   const warnings: ParseWarnings = {}
+  // 解析 HTML 字符串，生成 AST
   const ast = parse(html, {
     scriptingEnabled: false, // parse inside <noscript>
     sourceCodeLocationInfo: true,
@@ -215,6 +236,7 @@ export async function traverseHtml(
       handleParseError(e, html, filePath, warnings)
     },
   })
+  // 遍历 AST 中的所有节点
   traverseNodes(ast, visitor)
 
   for (const message of Object.values(warnings)) {
@@ -1160,16 +1182,26 @@ export type IndexHtmlTransform =
       handler: IndexHtmlTransformHook
     }
 
+/**
+ * 检查 HTML 文件中 importmap 位置是否正确
+ * 确保 <script type="importmap"> 标签出现在 <script type="module"> 和 <link rel="modulepreload"> 标签之前
+ * @param config
+ * @returns
+ */
 export function preImportMapHook(
   config: ResolvedConfig,
 ): IndexHtmlTransformHook {
+  // 处理导入映射的前置钩子
   return (html, ctx) => {
+    // 搜索 HTML 中的 <script type="importmap"> 标签
     const importMapIndex = html.search(importMapRE)
     if (importMapIndex < 0) return
 
+    // 搜索 HTML 中适合追加 importmap 的位置
     const importMapAppendIndex = html.search(importMapAppendRE)
     if (importMapAppendIndex < 0) return
 
+    // 通常是在第一个 <script type="module"> 或 <link rel="modulepreload"> 标签之前
     if (importMapAppendIndex < importMapIndex) {
       const relativeHtml = normalizePath(
         path.relative(config.root, ctx.filename),
@@ -1209,18 +1241,35 @@ export function postImportMapHook(): IndexHtmlTransformHook {
   }
 }
 
+/**
+ * 向 HTML 注入 CSP (Content Security Policy) nonce 元标签的转换钩子，
+ * 它在配置了 CSP nonce 时，
+ * 向 HTML 的 <head> 部分添加一个包含 nonce 值的 meta 标签
+ * @param config
+ * @returns
+ */
 export function injectCspNonceMetaTagHook(
   config: ResolvedConfig,
 ): IndexHtmlTransformHook {
   return () => {
     if (!config.html?.cspNonce) return
 
+    // CSP Nonce 机制：
+    // Nonce 是一个随机生成的唯一值，用于授权内联脚本的执行
+    // 在 CSP 策略中，可以使用 script-src 'nonce-<nonce值>' 来允许带有特定 nonce 的内联脚本
+    // 这样可以防止 XSS 攻击，同时允许必要的内联脚本执行
+
+    // nonce 属性在浏览器中是隐藏的，不能通过 JavaScript 访问
+    // 这增加了安全性，防止 nonce 值被恶意脚本获取
+
+    // 生成 meta 标签
     return [
       {
         tag: 'meta',
         injectTo: 'head',
         // use nonce attribute so that it's hidden
         // https://developer.mozilla.org/en-US/docs/Web/HTML/Global_attributes/nonce#accessing_nonces_and_nonce_hiding
+        // property: 'csp-nonce'：标识这是一个 CSP nonce 标签
         attrs: { property: 'csp-nonce', nonce: config.html.cspNonce },
       },
     ]
@@ -1229,14 +1278,20 @@ export function injectCspNonceMetaTagHook(
 
 /**
  * Support `%ENV_NAME%` syntax in html files
+ * 将 HTML 中的 %VARIABLE% 格式的占位符替换为实际的环境变量值
  */
 export function htmlEnvHook(config: ResolvedConfig): IndexHtmlTransformHook {
+  // 匹配 HTML 中的 %VARIABLE% 格式的占位符
   const pattern = /%(\S+?)%/g
+  // 解析环境变量前缀
   const envPrefix = resolveEnvPrefix({ envPrefix: config.envPrefix })
+  // 创建环境变量对象 env，初始值为配置中的 config.env
   const env: Record<string, any> = { ...config.env }
 
   // account for user env defines
+  // 遍历 config.define 中的所有键值对
   for (const key in config.define) {
+    // 筛选出以 import.meta.env. 开头的键
     if (key.startsWith(`import.meta.env.`)) {
       const val = config.define[key]
       if (typeof val === 'string') {
@@ -1254,8 +1309,10 @@ export function htmlEnvHook(config: ResolvedConfig): IndexHtmlTransformHook {
   return (html, ctx) => {
     return html.replace(pattern, (text, key) => {
       if (key in env) {
+        // 如果变量在 env 对象中存在，替换为对应的值
         return env[key]
       } else {
+        // 如果变量不存在但以环境变量前缀开头，发出警告
         if (envPrefix.some((prefix) => key.startsWith(prefix))) {
           const relativeHtml = normalizePath(
             path.relative(config.root, ctx.filename),
@@ -1335,6 +1392,7 @@ export function resolveHtmlTransforms(
   const postHooks: IndexHtmlTransformHook[] = []
 
   for (const plugin of plugins) {
+    // 找 transformIndexHtml 钩子
     const hook = plugin.transformIndexHtml
     if (!hook) continue
 

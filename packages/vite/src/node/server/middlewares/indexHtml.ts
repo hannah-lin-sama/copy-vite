@@ -65,6 +65,11 @@ interface InlineStyleAttribute {
   code: string
 }
 
+/**
+ * 构建了一个包含多个转换钩子的管道，用于处理开发环境中的 HTML 文件
+ * @param config
+ * @returns
+ */
 export function createDevHtmlTransformFn(
   config: ResolvedConfig,
 ): (
@@ -73,20 +78,25 @@ export function createDevHtmlTransformFn(
   html: string,
   originalUrl?: string,
 ) => Promise<string> {
+  // 从配置的插件中解析出 HTML 转换钩子
   const [preHooks, normalHooks, postHooks] = resolveHtmlTransforms(
     config.plugins,
   )
+
+  // 构建转换钩子管道
   const transformHooks = [
-    preImportMapHook(config),
-    injectCspNonceMetaTagHook(config),
+    preImportMapHook(config), // 处理导入映射的前置钩子
+    injectCspNonceMetaTagHook(config), // 注入 CSP nonce 元标签
     ...preHooks,
-    htmlEnvHook(config),
-    devHtmlHook,
+    htmlEnvHook(config), // 注入环境变量到 HTML 中
+    devHtmlHook, // 开发环境特定的 HTML 转换
     ...normalHooks,
     ...postHooks,
-    injectNonceAttributeTagHook(config),
-    postImportMapHook(),
+    injectNonceAttributeTagHook(config), // 注入 nonce 属性到标签中
+    postImportMapHook(), // 处理导入映射的后置钩子
   ]
+
+  // 创建插件上下文
   const pluginContext = new BasicMinimalPluginContext(
     { ...basePluginContextMeta, watchMode: true },
     config.logger,
@@ -97,6 +107,7 @@ export function createDevHtmlTransformFn(
     html: string,
     originalUrl?: string,
   ): Promise<string> => {
+    // 将所有转换钩子应用到 HTML 内容上
     return applyHtmlTransforms(html, transformHooks, pluginContext, {
       path: url,
       filename: getHtmlFilename(url, server),
@@ -198,14 +209,23 @@ const processNodeUrl = (
     : replacer(url)
   return processedUrl
 }
+
+/**
+ * 在 HTML 响应被发送给浏览器之前，对其进行动态转换和资源处理
+ * @param html
+ * @param param1 htmlPath：请求的路径（如 /index.html）
+ * @param param1 filename：磁盘上的实际文件路径
+ * @returns
+ */
 const devHtmlHook: IndexHtmlTransformHook = async (
-  html,
+  html, // 原始 HTML 字符串
   { path: htmlPath, filename, server, originalUrl },
 ) => {
   const { config, watcher } = server!
   const base = config.base || '/'
   const decodedBase = config.decodedBase || '/'
 
+  // 生成代理模块路径
   let proxyModulePath: string
   let proxyModuleUrl: string
 
@@ -225,6 +245,7 @@ const devHtmlHook: IndexHtmlTransformHook = async (
   }
   proxyModuleUrl = joinUrlSegments(decodedBase, proxyModuleUrl)
 
+  // 初始化 MagicString 与数据结构
   const s = new MagicString(html)
   let inlineModuleIndex = -1
   // The key to the proxyHtml cache is decoded, as it will be compared
@@ -273,18 +294,26 @@ const devHtmlHook: IndexHtmlTransformHook = async (
     preTransformRequest(server!, modulePath, decodedBase)
   }
 
+  // 使用 traverseHtml 函数（基于 parse5）遍历 HTML 的 AST
   await traverseHtml(html, filename, config.logger.warn, (node) => {
+    // 只处理元素节点
+    // 跳过文本节点、注释节点等
     if (!nodeIsElement(node)) {
       return
     }
 
     // script tags
+    // 处理 <script> 节点，根据 src 属性值进行处理
     if (node.nodeName === 'script') {
+      // 获取脚本信息
       const { src, srcSourceCodeLocation, isModule, isIgnored } =
         getScriptInfo(node)
 
+      // 忽略脚本：如果脚本带有 vite-ignore 属性，移除该属性（但不处理其内容）
       if (isIgnored) {
         removeViteIgnoreAttr(s, node.sourceCodeLocation!)
+
+        // 外部脚本：通过 processNodeUrl 重写 src 属性（例如添加 ?import 或处理绝对路径）
       } else if (src) {
         const processedUrl = processNodeUrl(
           src.value,
@@ -298,8 +327,12 @@ const devHtmlHook: IndexHtmlTransformHook = async (
         if (processedUrl !== src.value) {
           overwriteAttrValue(s, srcSourceCodeLocation!, processedUrl)
         }
+
+        // 内联模块脚本：调用 addInlineModule 转换为虚拟模块
       } else if (isModule && node.childNodes.length) {
         addInlineModule(node, 'js')
+
+        // 传统脚本：提取其中的动态 import() 表达式，并重写内部的 URL
       } else if (node.childNodes.length) {
         const scriptNode = node.childNodes[
           node.childNodes.length - 1
@@ -343,6 +376,7 @@ const devHtmlHook: IndexHtmlTransformHook = async (
     }
 
     // elements with [href/src] attrs
+    // 处理资源属性（href / src / srcset）
     const assetAttributes = getNodeAssetAttributes(node)
     for (const attr of assetAttributes) {
       if (attr.type === 'remove') {
@@ -363,6 +397,7 @@ const devHtmlHook: IndexHtmlTransformHook = async (
   })
 
   // invalidate the module so the newly cached contents will be served
+  // 处理收集的内联模块路径（使缓存失效）
   const clientModuleGraph = server?.environments.client.moduleGraph
   if (clientModuleGraph) {
     await Promise.all(
@@ -376,6 +411,7 @@ const devHtmlHook: IndexHtmlTransformHook = async (
   }
 
   await Promise.all([
+    // 处理 <style> 标签内容
     ...styleUrl.map(async ({ start, end, code }, index) => {
       const url = `${proxyModulePath}?html-proxy&direct&index=${index}.css`
 
@@ -403,6 +439,8 @@ const devHtmlHook: IndexHtmlTransformHook = async (
       }
       s.overwrite(start, end, content)
     }),
+
+    // 处理内联 style 属性
     ...inlineStyles.map(async ({ index, location, code }) => {
       // will transform with css plugin and cache result with css-post plugin
       const url = `${proxyModulePath}?html-proxy&inline-css&style-attr&index=${index}.css`
@@ -424,6 +462,10 @@ const devHtmlHook: IndexHtmlTransformHook = async (
 
   html = s.toString()
 
+  // 返回一个对象，包含 html 和 tags 数组
+  // tags 中指定了需要额外注入的 <script> 标签，
+  // 即 Vite 的 client 脚本（/@vite/client），
+  // 注入位置为 head-prepend（<head> 的最前面）
   return {
     html,
     tags: [
@@ -439,6 +481,13 @@ const devHtmlHook: IndexHtmlTransformHook = async (
   }
 }
 
+/**
+ * 用于处理 HTML 请求。
+ * 它支持两种模式的 HTML 处理：Full Bundle 模式和普通模式，确保 HTML 文件能够正确加载和转换
+ * @param root
+ * @param server
+ * @returns
+ */
 export function indexHtmlMiddleware(
   root: string,
   server: ViteDevServer | PreviewServer,
@@ -451,7 +500,10 @@ export function indexHtmlMiddleware(
 
   // Keep the named function. The name is visible in debug logs via `DEBUG=connect:dispatcher ...`
   return async function viteIndexHtmlMiddleware(req, res, next) {
+    // 当响应已经结束（即所有数据已发送完毕）时，该属性值为 true
     if (res.writableEnded) {
+      // 调用 next() 直接传递给下一个中间件
+      // 这样可以避免在已经结束的响应上尝试再次写入数据，从而防止产生错误
       return next()
     }
 
@@ -460,6 +512,7 @@ export function indexHtmlMiddleware(
     if (url?.endsWith('.html') && req.headers['sec-fetch-dest'] !== 'script') {
       if (fullBundleEnv) {
         const pathname = decodeURIComponent(url)
+        // 打包根目录的文件路径 index.html
         const filePath = pathname.slice(1) // remove first /
 
         let file = fullBundleEnv.memoryFiles.get(filePath)
@@ -467,6 +520,7 @@ export function indexHtmlMiddleware(
           return next()
         }
         const secFetchDest = req.headers['sec-fetch-dest']
+        // 处理文档类请求（SPA 回退）
         if (
           [
             'document',
@@ -476,9 +530,12 @@ export function indexHtmlMiddleware(
             '',
             undefined,
           ].includes(secFetchDest) &&
+          // 检查当前 bundle 是否过期
           ((await fullBundleEnv.triggerBundleRegenerationIfStale()) ||
             file === undefined)
         ) {
+          // 生成一个 fallback HTML 作为文件内容
+          // 生成一个默认的 HTML 入口
           file = { source: await generateFallbackHtml(server as ViteDevServer) }
         }
         if (!file) {
@@ -495,10 +552,14 @@ export function indexHtmlMiddleware(
         return send(req, res, html, 'html', { headers, etag: file.etag })
       }
 
+      // 根据请求 URL 确定 HTML 文件的实际文件系统路径
       let filePath: string
+
+      // 如果是开发服务器且 URL 以 FS_PREFIX 开头（表示直接访问文件系统路径）
       if (isDev && url.startsWith(FS_PREFIX)) {
         filePath = decodeURIComponent(fsPathFromId(url))
       } else {
+        // 将 URL 与服务器根目录连接，解析为绝对路径
         filePath = normalizePath(
           path.resolve(path.join(root, decodeURIComponent(url))),
         )
@@ -506,12 +567,15 @@ export function indexHtmlMiddleware(
 
       if (isDev) {
         const servingAccessResult = checkLoadingAccess(server.config, filePath)
+        // 如果路径被拒绝访问，返回 403 错误
         if (servingAccessResult === 'denied') {
           return respondWithAccessDenied(filePath, server, res)
         }
+        //
         if (servingAccessResult === 'fallback') {
           return next()
         }
+        // 确保路径被允许访问
         servingAccessResult satisfies 'allowed'
       } else {
         // `server.fs` options does not apply to the preview server.
@@ -527,10 +591,14 @@ export function indexHtmlMiddleware(
           : server.config.preview.headers
 
         try {
+          // 读取 HTML 文件内容
           let html = await fsp.readFile(filePath, 'utf-8')
           if (isDev) {
+            // 开发环境下，对 HTML 进行转换
             html = await server.transformIndexHtml(url, html, req.originalUrl)
           }
+          // 发送 HTML 内容
+          // 这里使用 send() 方法，而不是 res.end()，因为它会自动处理响应头和编码
           return send(req, res, html, 'html', { headers })
         } catch (e) {
           return next(e)

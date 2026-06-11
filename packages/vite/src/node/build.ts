@@ -1450,6 +1450,12 @@ function wrapEnvironmentHook<HookName extends keyof Plugin>(
   }
 }
 
+/**
+ *
+ * @param chunkMetadataMap  Vite 的元数据映射表（全局唯一）
+ * @param chunk Rolldown 输出的 chunk/asset 对象
+ * @param resetChunkMetadata 是否重置该 chunk 的元数据
+ */
 function injectChunkMetadata(
   chunkMetadataMap: ChunkMetadataMap,
   chunk: RenderedChunk | OutputChunk | OutputAsset,
@@ -1460,13 +1466,19 @@ function injectChunkMetadata(
   }
   // define instead of assign to avoid detected as a change
   // https://github.com/rolldown/rolldown/blob/f4c5ff27799f2b0152c689c398e61bc7d30429ff/packages/rolldown/src/utils/transform-to-rollup-output.ts#L87
+  // 向 chunk 对象注入 viteMetadata 属性
+  // defineProperty 而非直接赋值
+  // 注释说明：避免被 Rolldown 检测为 "change" 触发不必要的 diff 逻辑
   Object.defineProperty(chunk, 'viteMetadata', {
     value: chunkMetadataMap.get(chunk),
+    // 允许 JSON.stringify 和 Object.keys 等遍历到它
     enumerable: true,
   })
   if (chunk.type === 'chunk') {
+    // 覆盖 modules 属性
     Object.defineProperty(chunk, 'modules', {
       get() {
+        // 始终从 viteMetadata.__modules 读取，确保一致性。
         return chunk.viteMetadata!.__modules
       },
       enumerable: true,
