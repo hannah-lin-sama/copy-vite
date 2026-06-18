@@ -126,6 +126,7 @@ export type PreviewServerHook = (
 export async function preview(
   inlineConfig: InlineConfig = {},
 ): Promise<PreviewServer> {
+  // 解析配置
   const config = await resolveConfig(
     inlineConfig,
     'serve',
@@ -134,8 +135,12 @@ export async function preview(
     true,
   )
 
+  // 检查输出目录是否存在
   const clientOutDir = config.environments.client.build.outDir
+  // 检查输出目录是否存在
   const distDir = path.resolve(config.root, clientOutDir)
+
+  // 如果不存在，抛出错误
   if (
     !fs.existsSync(distDir) &&
     // error if no plugins implement `configurePreviewServer`
@@ -151,7 +156,8 @@ export async function preview(
   }
 
   const httpsOptions = await resolveHttpsConfig(config.preview.https)
-  const app = connect() as Connect.Server
+  const app = connect() as Connect.Server // 创建 connect 应用实例
+  // 创建 HTTP 服务器
   const httpServer = await resolveHttpServer(app, httpsOptions)
   setClientErrorHandler(httpServer, config.logger)
 
@@ -231,22 +237,36 @@ export async function preview(
     app.use(proxyMiddleware(httpServer, proxy, config))
   }
 
+  // 压缩
   app.use(compression())
 
   // base
   if (config.base !== '/') {
+    // base 路径
     app.use(baseMiddleware(config.rawBase, false))
   }
 
   // static assets
   const headers = config.preview.headers
+
+  /**
+   * 负责从构建产物目录 distDir 中读取并返回静态文件(JS、CSS、图片、字体等)
+   * @param args
+   * @param args sirv 中间件的参数
+   * @param args[0] 目录路径
+   * @param args[1] 选项对象
+   * @param args[2] 回调函数
+   * @returns
+   */
   const viteAssetMiddleware = (...args: readonly [any, any?, any?]) =>
+    // 每次请求都会重新调用 sirv(...),创建一个新的 sirv 实例
     sirv(distDir, {
-      etag: true,
-      dev: true,
-      extensions: [],
-      ignores: false,
+      etag: true, // 启用 ETag 缓存协商,客户端缓存有效时返回 304,减少带宽
+      dev: true, // 开发模式,禁用长期缓存头
+      extensions: [], // 不自动补全扩展名
+      ignores: false, // 不忽略任何文件
       setHeaders(res) {
+        // 自定义响应头
         if (headers) {
           for (const name in headers) {
             res.setHeader(name, headers[name]!)
@@ -254,6 +274,7 @@ export async function preview(
         }
       },
       shouldServe(filePath) {
+        // 自定义是否服务的判断
         return shouldServeFile(filePath, distDir)
       },
     })(...args)
@@ -274,6 +295,7 @@ export async function preview(
     app.use(indexHtmlMiddleware(normalizedDistDir, server))
 
     // handle 404s
+    // 直接终结响应:把状态码设为 404 并结束响应,不再调用 next()
     app.use(notFoundMiddleware())
   }
 

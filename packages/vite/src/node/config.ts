@@ -1361,7 +1361,7 @@ export async function resolveConfig(
   command: 'build' | 'serve', // 开发服务器 serve ，构建模式 build
   defaultMode = 'development', // 默认模式为 development， build 模式为 production
   defaultNodeEnv = 'development', // 默认 devlopment , build 模式为 production
-  isPreview = false,
+  isPreview = false, // 是否为预览模式
   /** @internal */
   patchConfig: ((config: ResolvedConfig) => void) | undefined = undefined,
   /** @internal */

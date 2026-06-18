@@ -441,6 +441,7 @@ cli
       filterDuplicateOptions(options)
       const { preview } = await import('./preview')
       try {
+        // start preview server
         const server = await preview({
           root,
           base: options.base,
@@ -458,7 +459,9 @@ cli
             open: options.open,
           },
         })
+        // print urls
         server.printUrls()
+        // bind shortcuts
         server.bindCLIShortcuts({ print: true })
       } catch (e) {
         createLogger(options.logLevel).error(

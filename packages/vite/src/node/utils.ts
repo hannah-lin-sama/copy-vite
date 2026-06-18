@@ -1040,6 +1040,7 @@ export function resolveServerUrls(
     if (hostnameName.includes(':')) {
       hostnameName = `[${hostnameName}]`
     }
+    // 构建 URL
     const address = `${protocol}://${hostnameName}:${port}${base}`
     if (loopbackHosts.has(hostname.host)) {
       local.push(address)
